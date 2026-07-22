@@ -29,12 +29,14 @@ router.get('/', verifyJWT, async (req, res) => {
          SELECT project_id, COUNT(*) AS total
          FROM project_items
          WHERE status NOT IN ('done','delivered','approved')
+           AND section_type IN ('task','deliverable','followup')
          GROUP BY project_id
        ) ic ON ic.project_id = p.id
        LEFT JOIN (
          SELECT project_id, COUNT(*) AS overdue
          FROM project_items
          WHERE status NOT IN ('done','delivered','approved')
+           AND section_type IN ('task','deliverable','followup')
            AND due_date < CURRENT_DATE
          GROUP BY project_id
        ) io ON io.project_id = p.id
@@ -42,6 +44,7 @@ router.get('/', verifyJWT, async (req, res) => {
          SELECT project_id, MIN(due_date) AS earliest_due
          FROM project_items
          WHERE status NOT IN ('done','delivered','approved')
+           AND section_type IN ('task','deliverable','followup')
            AND due_date IS NOT NULL
          GROUP BY project_id
        ) ed ON ed.project_id = p.id

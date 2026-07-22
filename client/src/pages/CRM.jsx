@@ -263,7 +263,7 @@ function IUBadge({ importance, urgency, onChangeI, onChangeU }) {
 }
 
 // ── Contact Detail Panel ────────────────────────────────────────────────────
-function DetailPanel({ contact, onClose, onUpdate, onDealsChange, currentUserId, isAdmin, users, customFieldDefs, linkedProjects, onOpenProject }) {
+function DetailPanel({ contact, onClose, onUpdate, onDealsChange, onDelete, currentUserId, isAdmin, users, customFieldDefs, linkedProjects, onOpenProject }) {
   const [activity, setActivity]     = useState([]);
   const [noteDraft, setNoteDraft]   = useState('');
   const [followupDate, setFollowupDate] = useState(contact.next_followup?.slice(0,10) || '');
@@ -273,6 +273,7 @@ function DetailPanel({ contact, onClose, onUpdate, onDealsChange, currentUserId,
   const [copied, setCopied]         = useState(null);
   const [deals, setDeals]           = useState([]);
   const [tasks, setTasks]           = useState([]);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [showDealForm, setShowDealForm] = useState(false);
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [dealForm, setDealForm]     = useState({ title:'', value:'', stage:'prospect', expected_close:'' });
@@ -291,6 +292,12 @@ function DetailPanel({ contact, onClose, onUpdate, onDealsChange, currentUserId,
     custom_fields: { ...cf },
   });
   const canEdit = isAdmin || contact.owner_id === currentUserId;
+  const canDelete = isAdmin || contact.owner_id === currentUserId;
+
+  const handleDelete = async () => {
+    await api.delete(`/contacts/${contact.id}`);
+    onDelete(contact.id);
+  };
 
   const reloadDeals = () => api.get(`/deals?contact_id=${contact.id}`).then(r => setDeals(r.data)).catch(()=>{});
   const reloadTasks = () => api.get(`/tasks?contact_id=${contact.id}`).then(r => setTasks(r.data)).catch(()=>{});
@@ -433,7 +440,26 @@ function DetailPanel({ contact, onClose, onUpdate, onDealsChange, currentUserId,
               </div>
             </div>
             <div style={{ display:'flex', gap:6, flexShrink:0 }}>
-              {canEdit && !editing && (
+              {canDelete && !editing && !confirmDelete && (
+                <button onClick={() => setConfirmDelete(true)} title="Delete contact"
+                  style={{ width:32, height:32, borderRadius:8, display:'flex', alignItems:'center', justifyContent:'center', color:'#DC2626', background:'#FEE2E2' }}>
+                  <Icon name="trash" size={15} />
+                </button>
+              )}
+              {confirmDelete && (
+                <>
+                  <span style={{ fontSize:12.5, color:'#DC2626', fontWeight:600, alignSelf:'center' }}>Delete?</span>
+                  <button onClick={handleDelete}
+                    style={{ height:32, padding:'0 12px', borderRadius:8, fontSize:13, fontWeight:700, background:'#DC2626', color:'#fff', border:'none', cursor:'pointer' }}>
+                    Yes
+                  </button>
+                  <button onClick={() => setConfirmDelete(false)}
+                    style={{ height:32, padding:'0 12px', borderRadius:8, fontSize:13, fontWeight:600, color:'#5A5A66', background:'#F2F2F5', border:'none', cursor:'pointer' }}>
+                    No
+                  </button>
+                </>
+              )}
+              {canEdit && !editing && !confirmDelete && (
                 <button onClick={() => setEditing(true)} title="Edit contact"
                   style={{ width:32, height:32, borderRadius:8, display:'flex', alignItems:'center', justifyContent:'center', color:'#5B5BD6', background:'#EEEEFF' }}>
                   <Icon name="pencil" size={15} />
@@ -451,9 +477,11 @@ function DetailPanel({ contact, onClose, onUpdate, onDealsChange, currentUserId,
                   </button>
                 </>
               )}
-              <button onClick={onClose} style={{ width:32, height:32, borderRadius:8, display:'flex', alignItems:'center', justifyContent:'center', color:'#8A8A94' }}>
-                <Icon name="x" size={18} />
-              </button>
+              {!confirmDelete && (
+                <button onClick={onClose} style={{ width:32, height:32, borderRadius:8, display:'flex', alignItems:'center', justifyContent:'center', color:'#8A8A94' }}>
+                  <Icon name="x" size={18} />
+                </button>
+              )}
             </div>
           </div>
 
@@ -2079,6 +2107,7 @@ const RECURRENCE_LABELS = { none:'', daily:'Daily', weekly:'Weekly', biweekly:'E
 
 function TasksTab({ items, updateItem, deleteItem, openAddItem, openEditItem }) {
   const actionable = items.filter(it => ['task','deliverable','followup'].includes(it.section_type));
+  const [showDone, setShowDone] = useState(false);
 
   const isDone = it => it.section_type === 'deliverable' ? it.status === 'delivered' : it.status === 'done';
 
@@ -2093,6 +2122,36 @@ function TasksTab({ items, updateItem, deleteItem, openAddItem, openEditItem }) 
     const cycleDeliv = () => {
       const seq = ['draft','review','approved','delivered'];
       updateItem(it.id, { status: seq[(seq.indexOf(it.status) + 1) % seq.length] });
+    };
+
+    // Completion timestamp + early/late marker
+    const CompletedMeta = () => {
+      if (!finished || !it.completed_at) return null;
+      const completedDate = new Date(it.completed_at);
+      const label = completedDate.toLocaleString([], {
+        month:'short', day:'numeric',
+        hour:'2-digit', minute:'2-digit'
+      });
+      let marker = null;
+      if (it.due_date) {
+        const due = new Date(it.due_date + 'T23:59:59');
+        const diffDays = Math.round((completedDate - due) / 86400000);
+        if (diffDays <= 0) {
+          marker = <span style={{ fontSize:10.5, fontWeight:700, padding:'1px 6px', borderRadius:6, background:'#ECFDF3', color:'#16A34A', whiteSpace:'nowrap' }}>
+            {diffDays < -1 ? `${Math.abs(diffDays)}d early` : 'On time'}
+          </span>;
+        } else {
+          marker = <span style={{ fontSize:10.5, fontWeight:700, padding:'1px 6px', borderRadius:6, background:'#FEF2F2', color:'#DC2626', whiteSpace:'nowrap' }}>
+            {diffDays === 1 ? '1d late' : `${diffDays}d late`}
+          </span>;
+        }
+      }
+      return (
+        <div style={{ fontSize:11, color:'#B0B0BA', marginTop:3, display:'flex', alignItems:'center', gap:5 }}>
+          <span>Done {label}</span>
+          {marker}
+        </div>
+      );
     };
 
     return (
@@ -2131,6 +2190,7 @@ function TasksTab({ items, updateItem, deleteItem, openAddItem, openEditItem }) 
               {it.assignee_name && <span>→ {it.assignee_name}</span>}
             </div>
           )}
+          <CompletedMeta/>
         </div>
 
         {it.doc_type && <DocTypeBadge type={it.doc_type}/>}
@@ -2138,7 +2198,7 @@ function TasksTab({ items, updateItem, deleteItem, openAddItem, openEditItem }) 
           onChangeI={v => updateItem(it.id, { importance: v })}
           onChangeU={v => updateItem(it.id, { urgency: v })} />
         {it.assignee_name && <Avatar name={it.assignee_name} color={it.assignee_color} size={24}/>}
-        {it.due_date && <DuePill iso={it.due_date}/>}
+        {!finished && it.due_date && <DuePill iso={it.due_date}/>}
         <button onClick={() => updateItem(it.id, { committed: !it.committed })}
           title={it.committed ? 'Committed this week (click to unmark)' : 'Commit to this week'}
           style={{ color:it.committed?'#D97706':'#D1D1D8', background:'none', border:'none', cursor:'pointer', padding:'3px', flexShrink:0 }}>
@@ -2166,14 +2226,28 @@ function TasksTab({ items, updateItem, deleteItem, openAddItem, openEditItem }) 
 
   return (
     <div>
-      {[{ label:'Open', items:open }, { label:'Done', items:done }].filter(g => g.items.length > 0).map(g => (
-        <div key={g.label} style={{ marginBottom:18 }}>
-          <div style={{ fontSize:12.5, fontWeight:700, color:'#6B6B76', marginBottom:7 }}>{g.label} · {g.items.length}</div>
+      {open.length > 0 && (
+        <div style={{ marginBottom:18 }}>
+          <div style={{ fontSize:12.5, fontWeight:700, color:'#6B6B76', marginBottom:7 }}>Open · {open.length}</div>
           <div style={{ background:'#fff', border:'1px solid #ECECEF', borderRadius:12, overflow:'hidden', boxShadow:'0 1px 2px rgba(16,16,30,0.04)' }}>
-            {g.items.map(it => <Row key={it.id} it={it}/>)}
+            {open.map(it => <Row key={it.id} it={it}/>)}
           </div>
         </div>
-      ))}
+      )}
+      {done.length > 0 && (
+        <div style={{ marginBottom:18 }}>
+          <button onClick={() => setShowDone(v => !v)}
+            style={{ display:'flex', alignItems:'center', gap:6, fontSize:12.5, fontWeight:700, color:'#6B6B76', marginBottom:7, background:'none', border:'none', cursor:'pointer', padding:0 }}>
+            <span style={{ display:'flex', transform: showDone ? 'rotate(0deg)' : 'rotate(-90deg)', transition:'transform .15s' }}><Icon name="chevron" size={13} color="#9A9AA4"/></span>
+            Completed · {done.length}
+          </button>
+          {showDone && (
+            <div style={{ background:'#fff', border:'1px solid #ECECEF', borderRadius:12, overflow:'hidden', boxShadow:'0 1px 2px rgba(16,16,30,0.04)' }}>
+              {done.map(it => <Row key={it.id} it={it}/>)}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -4986,6 +5060,7 @@ export default function CRM() {
             const updated = await api.get('/contacts').then(r => r.data.find(c => c.id === detailContact.id));
             if (updated) setDetailContact(updated);
           }}
+          onDelete={(id) => { setDetailContact(null); loadContacts(); loadDeals(); }}
           currentUserId={user.id}
           isAdmin={isAdmin}
           users={users}

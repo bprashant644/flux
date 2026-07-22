@@ -1,0 +1,1 @@
+ALTER TABLE project_items ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;

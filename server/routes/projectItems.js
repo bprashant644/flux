@@ -115,6 +115,17 @@ router.put('/:id', verifyJWT, async (req, res) => {
       fields.push(`committed_at=NULL`);
     }
 
+    // Stamp completed_at when transitioning into a done state; clear when reopened
+    const DONE_STATUSES = ['done', 'delivered', 'approved'];
+    const wasOpen = !DONE_STATUSES.includes(item.status);
+    const becomingDone = req.body.status && DONE_STATUSES.includes(req.body.status);
+    const becomingOpen = req.body.status && !DONE_STATUSES.includes(req.body.status);
+    if (wasOpen && becomingDone) {
+      fields.push(`completed_at=NOW()`);
+    } else if (!wasOpen && becomingOpen) {
+      fields.push(`completed_at=NULL`);
+    }
+
     // importance and urgency: allow explicit null to unclassify; skip if not sent
     for (const k of ['importance','urgency']) {
       if (req.body[k] !== undefined) {

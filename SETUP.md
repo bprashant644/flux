@@ -18,7 +18,7 @@ cp .env.example .env
 
 ## 3. Create the database
 ```bash
-createdb relay_crm
+createdb flux_crm
 # The app auto-runs migrations on startup — no manual SQL needed
 ```
 

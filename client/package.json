@@ -1,5 +1,5 @@
 {
-  "name": "relay-crm-client",
+  "name": "flux-client",
   "private": true,
   "scripts": {
     "dev": "vite",

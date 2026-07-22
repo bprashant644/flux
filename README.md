@@ -39,7 +39,7 @@ cp .env.example .env
 
 ### 3. Create the database
 ```bash
-createdb relay_crm
+createdb flux_crm
 ```
 Migrations run automatically on first startup — no manual SQL needed.
 

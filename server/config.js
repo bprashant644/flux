@@ -2,7 +2,7 @@ require('dotenv').config();
 
 module.exports = {
   port: process.env.PORT || 3001,
-  databaseUrl: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/relay_crm',
+  databaseUrl: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/flux_crm',
   jwtSecret: process.env.JWT_SECRET || 'dev_secret_change_in_production',
   smtp: {
     host: process.env.SMTP_HOST,

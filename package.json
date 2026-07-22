@@ -1,5 +1,5 @@
 {
-  "name": "relay-crm",
+  "name": "flux-crm",
   "private": true,
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client\"",

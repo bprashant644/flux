@@ -1,0 +1,24 @@
+# Environment — never commit real secrets
+.env
+
+# Uploaded user files
+server/uploads/
+
+# Build output
+client/dist/
+
+# Test artifacts
+tests/report/
+test-results/
+playwright-report/
+
+# Runtime logs
+nohup.out
+output.log
+*.log
+
+# Claude Code workspace
+.claude/
+
+# Node
+node_modules/

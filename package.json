@@ -1,5 +1,5 @@
 {
-  "name": "flux-crm",
+  "name": "flux",
   "private": true,
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client\"",

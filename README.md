@@ -1,6 +1,6 @@
 # Flux
 
-A self-hosted CRM and project management tool for small sales teams.
+A self-hosted CRM, project management, and HR tool for small to medium teams.
 
 **Features**
 - Contact pipeline with stages, follow-up scheduling, and activity log

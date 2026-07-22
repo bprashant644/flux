@@ -8,7 +8,6 @@ A self-hosted CRM and project management tool for small sales teams.
 - Project management with milestones, deliverables, quadrant prioritisation, and PPC tracking
 - HR module — employees, attendance, leaves, payroll, documents
 - Microsoft Teams and email digest notifications
-- Outlook Calendar sync via Microsoft Graph
 - Role-based access: Admin and Rep roles
 - Per-user module access control
 
@@ -34,7 +33,7 @@ npm --prefix client install
 ### 2. Configure environment
 ```bash
 cp .env.example .env
-# Edit .env — set DATABASE_URL, JWT_SECRET, and optionally SMTP / Graph API keys
+# Edit .env — set DATABASE_URL, JWT_SECRET, and optionally SMTP keys
 ```
 
 ### 3. Create the database
@@ -81,13 +80,6 @@ Fill in `SMTP_*` in `.env`. Digests fire at 8am Mon–Fri automatically.
 
 ### Microsoft Teams
 Each user sets their own Incoming Webhook URL in **Settings** inside the app.
-
-### Outlook Calendar sync
-1. Register an app in [Azure Portal](https://portal.azure.com) → App registrations
-2. Add redirect URI: `http://your-server:3001/api/calendar/callback`
-3. Grant permission: Microsoft Graph → Delegated → `Calendars.ReadWrite`
-4. Create a client secret and fill in `GRAPH_*` in `.env`
-5. Each user connects via Settings → **Connect Microsoft Account**
 
 ## Access control
 

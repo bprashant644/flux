@@ -13,7 +13,7 @@ npm --prefix client install
 ## 2. Configure environment
 ```bash
 cp .env.example .env
-# Edit .env with your database URL, JWT secret, SMTP, and optionally Graph API keys
+# Edit .env with your database URL, JWT secret, and optionally SMTP keys
 ```
 
 ## 3. Create the database
@@ -65,14 +65,6 @@ Each user sets their own Incoming Webhook URL in **Settings** inside the app:
 1. Open a Teams channel → right-click → **Connectors**
 2. Add **Incoming Webhook** → copy the URL
 3. Paste it in Flux → Settings → Microsoft Teams
-
-### Outlook Calendar sync
-1. Register an app in [Azure Portal](https://portal.azure.com) → App registrations
-2. Add redirect URI: `http://your-server:3001/api/calendar/callback`
-3. Grant permission: Microsoft Graph → Delegated → `Calendars.ReadWrite`
-4. Create a client secret
-5. Fill in GRAPH_* in .env
-6. Each user connects in Settings → **Connect Microsoft Account**
 
 ---
 

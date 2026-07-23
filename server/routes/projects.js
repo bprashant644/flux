@@ -223,30 +223,48 @@ router.get('/focus', verifyJWT, async (req, res) => {
       SELECT pi.id, pi.title, pi.section_type, pi.status, pi.due_date,
              pi.importance, pi.urgency, pi.effort_size, pi.effort_hours,
              pi.context_tag, pi.waiting_on, pi.waiting_since, pi.checklist,
-             CASE WHEN pi.due_date < CURRENT_DATE THEN 'overdue'
+             CASE WHEN pi.due_date IS NULL THEN 'none'
+                  WHEN pi.due_date < CURRENT_DATE THEN 'overdue'
                   WHEN pi.due_date = CURRENT_DATE THEN 'today'
-                  ELSE 'week' END AS due_bucket,
+                  WHEN pi.due_date <= CURRENT_DATE + INTERVAL '7 days' THEN 'week'
+                  ELSE 'later' END AS due_bucket,
+             (df.id IS NOT NULL) AS pinned,
+             df.position AS pin_position,
              c.name AS waiting_contact_name,
              p.id AS project_id, p.title AS project_title, p.color AS project_color
       FROM project_items pi
       JOIN projects p ON p.id = pi.project_id
       LEFT JOIN contacts c ON c.id = pi.waiting_contact_id
+      LEFT JOIN daily_focus df ON df.item_id = pi.id AND df.user_id = $1 AND df.focus_date = CURRENT_DATE
       WHERE p.status = 'active'
         AND pi.section_type IN ('task','deliverable','followup')
-        AND pi.status NOT IN ('done','delivered','approved')
-        AND (pi.assignee_id = $1 OR pi.created_by = $1)
-        AND pi.due_date IS NOT NULL
-        AND pi.due_date <= CURRENT_DATE + INTERVAL '7 days'
+        AND (
+          df.id IS NOT NULL
+          OR (
+            pi.status NOT IN ('done','delivered','approved')
+            AND (pi.assignee_id = $1 OR pi.created_by = $1)
+            AND pi.due_date IS NOT NULL
+            AND pi.due_date <= CURRENT_DATE + INTERVAL '7 days'
+          )
+        )
       ORDER BY
+        (df.id IS NULL) ASC,
+        df.position ASC NULLS LAST,
         CASE WHEN pi.due_date < CURRENT_DATE THEN 0
              WHEN pi.due_date = CURRENT_DATE THEN 1 ELSE 2 END,
         (COALESCE(pi.urgency,0) + COALESCE(pi.importance,0)) DESC,
-        pi.due_date ASC,
+        pi.due_date ASC NULLS LAST,
         COALESCE(pi.effort_hours, 4) ASC
-      LIMIT 25
+      LIMIT 40
     `, [uid]);
-    const counts = { overdue: 0, today: 0, week: 0 };
-    for (const r of rows) counts[r.due_bucket]++;
+    const DONE = ['done','delivered','approved'];
+    const counts = { overdue: 0, today: 0, week: 0, pinned: 0, pinned_done: 0 };
+    for (const r of rows) {
+      if (r.pinned) {
+        counts.pinned++;
+        if (DONE.includes(r.status)) counts.pinned_done++;
+      } else if (counts[r.due_bucket] !== undefined) counts[r.due_bucket]++;
+    }
     res.json({ items: rows, counts });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Server error' }); }
 });

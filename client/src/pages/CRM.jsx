@@ -3319,60 +3319,242 @@ function ProjectsDashboard({ projects, onSelect }) {
   );
 }
 
-// ── FocusQueue — computed "what matters today" list from /projects/focus ──────
-function FocusQueue({ onOpenProject }) {
-  const [data,    setData]    = useState(null);
-  const [loading, setLoading] = useState(true);
+// ── FocusQueue — "Today" panel: auto-suggested due items + a curated daily plan ──
+// Pins live in daily_focus (per user, per day). A pin never changes an item's due date.
+function FocusQueue({ onOpenProject, projects = [] }) {
+  const [data,       setData]       = useState(null);
+  const [carryover,  setCarryover]  = useState([]);
+  const [coDismissed,setCoDismissed]= useState(false);
+  const [loading,    setLoading]    = useState(true);
+  const [showAdd,    setShowAdd]    = useState(false);
+  const [addMode,    setAddMode]    = useState('existing'); // 'existing' | 'new'
+  const [allItems,   setAllItems]   = useState(null);
+  const [search,     setSearch]     = useState('');
+  const [newTitle,   setNewTitle]   = useState('');
+  const [newProject, setNewProject] = useState('');
+  const [saving,     setSaving]     = useState(false);
 
-  useEffect(() => {
-    api.get('/projects/focus')
-      .then(r => setData(r.data))
-      .finally(() => setLoading(false));
-  }, []);
+  const DONE = ['done','delivered','approved'];
+  const activeProjects = projects.filter(p => p.status === 'active');
 
-  if (loading || !data || !data.items.length) return null;
+  const refresh = () => Promise.all([
+    api.get('/projects/focus').then(r => setData(r.data)),
+    api.get('/daily-focus/carryover').then(r => setCarryover(r.data)).catch(() => {}),
+  ]).finally(() => setLoading(false));
+  useEffect(() => { refresh(); }, []);
 
-  const groups = [
+  const pin   = async (itemId) => { await api.post('/daily-focus', { item_id: itemId }); refresh(); };
+  const unpin = async (itemId) => { await api.delete(`/daily-focus/${itemId}`); refresh(); };
+  const toggleDone = async (it) => {
+    const doneStatus = it.section_type === 'deliverable' ? 'delivered' : 'done';
+    await api.put(`/projects/${it.project_id}/items/${it.id}`, { status: DONE.includes(it.status) ? 'open' : doneStatus });
+    refresh();
+  };
+  const carryOverAll = async () => { await api.post('/daily-focus/carryover'); refresh(); };
+
+  const openAddPopover = () => {
+    setShowAdd(v => !v);
+    if (!allItems) api.get('/projects/all-items').then(r => setAllItems(r.data)).catch(() => setAllItems([]));
+  };
+  const quickAddNew = async () => {
+    if (!newTitle.trim() || !newProject) return;
+    setSaving(true);
+    try {
+      const r = await api.post(`/projects/${newProject}/items`, {
+        section_type:'task', title:newTitle.trim(), due_date: new Date().toISOString().slice(0,10) });
+      await api.post('/daily-focus', { item_id: r.data.id });
+      setNewTitle(''); setShowAdd(false);
+      refresh();
+    } finally { setSaving(false); }
+  };
+
+  if (loading || !data) return null;
+
+  const pinnedOpen = data.items.filter(it => it.pinned && !DONE.includes(it.status));
+  const pinnedDone = data.items.filter(it => it.pinned &&  DONE.includes(it.status));
+  const suggested  = [
     { key:'overdue', label:'Overdue',   color:'#DC2626' },
-    { key:'today',   label:'Today',     color:'#C2410C' },
+    { key:'today',   label:'Due today', color:'#C2410C' },
     { key:'week',    label:'This week', color:'#2563EB' },
-  ].map(g => ({ ...g, items: data.items.filter(it => it.due_bucket === g.key) }))
+  ].map(g => ({ ...g, items: data.items.filter(it => !it.pinned && it.due_bucket === g.key) }))
    .filter(g => g.items.length > 0);
+
+  const pinnedIds = new Set(data.items.filter(it => it.pinned).map(it => it.id));
+  const pickerItems = (allItems || [])
+    .filter(it => !pinnedIds.has(it.id))
+    .filter(it => !search.trim() || `${it.title} ${it.project_title}`.toLowerCase().includes(search.toLowerCase()))
+    .slice(0, 8);
+
+  const iconBtn = (label, onClick, title, color) => (
+    <button onClick={e => { e.stopPropagation(); onClick(); }} title={title}
+      style={{ background:'none', border:'none', cursor:'pointer', padding:'2px 4px', fontSize:13, color, flexShrink:0, lineHeight:1 }}>
+      {label}
+    </button>
+  );
+
+  const Row = ({ it, planRow }) => {
+    const isDone = DONE.includes(it.status);
+    return (
+      <div onClick={() => onOpenProject(it.project_id)}
+        style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 10px', borderRadius:9,
+          border:'1px solid #F0F0F3', marginBottom:4, cursor:'pointer', opacity: isDone ? 0.55 : 1,
+          borderLeft:`4px solid ${it.project_color || ACCENT}`,
+          background: planRow && !isDone ? '#FBFAFF' : undefined }}
+        onMouseEnter={e => e.currentTarget.style.background='#FAFAFB'}
+        onMouseLeave={e => e.currentTarget.style.background = planRow && !isDone ? '#FBFAFF' : ''}>
+        {planRow && (
+          <button onClick={e => { e.stopPropagation(); toggleDone(it); }}
+            title={isDone ? 'Reopen' : 'Mark done'}
+            style={{ width:18, height:18, borderRadius:5, border:'2px solid', flexShrink:0, cursor:'pointer',
+              borderColor: isDone ? '#16A34A' : '#D1D1D8', background: isDone ? '#16A34A' : 'transparent',
+              display:'flex', alignItems:'center', justifyContent:'center', padding:0 }}>
+            {isDone && <Icon name="check" size={10} color="#fff"/>}
+          </button>
+        )}
+        <div style={{ flex:1, minWidth:0 }}>
+          <span style={{ fontSize:10.5, fontWeight:700, color:'#9A9AA4', marginRight:8 }}>{it.project_title}</span>
+          <span style={{ fontSize:13, fontWeight:600, textDecoration: isDone ? 'line-through' : 'none',
+            color: isDone ? '#9A9AA4' : '#19191F' }}>{it.title}</span>
+        </div>
+        <ContextChip tag={it.context_tag}/>
+        <EffortBadge size={it.effort_size} hours={it.effort_hours}/>
+        <WaitingPill waitingOn={it.waiting_on} contactName={it.waiting_contact_name} since={it.waiting_since}/>
+        {it.due_date && !isDone && <DuePill iso={it.due_date}/>}
+        {planRow
+          ? iconBtn('📌', () => unpin(it.id), 'Remove from today\'s plan', '#D97706')
+          : iconBtn('📌', () => pin(it.id), 'Add to today\'s plan', '#C4C4CC')}
+      </div>
+    );
+  };
+
+  const nothingToShow = !data.items.length && (!carryover.length || coDismissed);
 
   return (
     <div style={{ marginTop:16, background:'#fff', border:'1px solid #ECECEF', borderRadius:14, padding:'16px 18px', boxShadow:'0 1px 2px rgba(16,16,30,0.04)' }}>
       <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14 }}>
         <Icon name="task" size={15} color={ACCENT}/>
         <span style={{ fontSize:14.5, fontWeight:700 }}>Today's focus</span>
-        <span style={{ fontSize:12, color:'#9A9AA4' }}>
+        {data.counts.pinned > 0 && (
+          <span style={{ fontSize:12, fontWeight:700, padding:'2px 8px', borderRadius:7,
+            background: data.counts.pinned_done === data.counts.pinned ? '#ECFDF3' : '#F0F0F7',
+            color: data.counts.pinned_done === data.counts.pinned ? '#16A34A' : ACCENT }}>
+            {data.counts.pinned_done}/{data.counts.pinned} planned done
+          </span>
+        )}
+        <span style={{ fontSize:12, color:'#9A9AA4', flex:1 }}>
           {data.counts.overdue > 0 && <span style={{ color:'#DC2626', fontWeight:700 }}>{data.counts.overdue} overdue · </span>}
           {data.counts.today} due today · {data.counts.week} this week
         </span>
+        <button onClick={openAddPopover}
+          style={{ height:28, padding:'0 11px', borderRadius:8, fontSize:12, fontWeight:700, cursor:'pointer',
+            border: showAdd ? 'none' : '1.5px solid #E5E5EA',
+            background: showAdd ? ACCENT : '#FAFAFB', color: showAdd ? '#fff' : '#5A5A66' }}>
+          + Plan a task
+        </button>
       </div>
-      {groups.map(g => (
+
+      {/* Add popover */}
+      {showAdd && (
+        <div style={{ border:'1px solid #E5E5EA', borderRadius:10, padding:12, marginBottom:14, background:'#FAFAFB' }}>
+          <div style={{ display:'flex', gap:6, marginBottom:10 }}>
+            {[['existing','Pull in existing'],['new','New task']].map(([m, l]) => (
+              <button key={m} onClick={() => setAddMode(m)}
+                style={{ height:28, padding:'0 11px', borderRadius:7, fontSize:12, fontWeight:600, cursor:'pointer',
+                  border: addMode === m ? `2px solid ${ACCENT}` : '1.5px solid #E5E5EA',
+                  background: addMode === m ? `${ACCENT}18` : '#fff', color: addMode === m ? ACCENT : '#7A7A88' }}>
+                {l}
+              </button>
+            ))}
+          </div>
+          {addMode === 'existing' ? (
+            <div>
+              <input value={search} onChange={e => setSearch(e.target.value)} autoFocus
+                placeholder="Search open items across your projects…"
+                style={{ width:'100%', height:34, padding:'0 11px', border:'1px solid #E5E5EA', borderRadius:8,
+                  fontSize:13, background:'#fff', outline:'none', boxSizing:'border-box', marginBottom:8 }}/>
+              {allItems === null ? (
+                <div style={{ fontSize:12.5, color:'#9A9AA4', padding:'8px 2px' }}>Loading…</div>
+              ) : pickerItems.length === 0 ? (
+                <div style={{ fontSize:12.5, color:'#9A9AA4', padding:'8px 2px' }}>No matching open items.</div>
+              ) : pickerItems.map(it => (
+                <div key={it.id} onClick={() => { pin(it.id); setShowAdd(false); setSearch(''); }}
+                  style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 9px', borderRadius:8,
+                    cursor:'pointer', marginBottom:2, background:'#fff', border:'1px solid #F0F0F3' }}
+                  onMouseEnter={e => e.currentTarget.style.borderColor='#CCCCD8'}
+                  onMouseLeave={e => e.currentTarget.style.borderColor='#F0F0F3'}>
+                  <span style={{ width:7, height:7, borderRadius:'50%', background: it.project_color || ACCENT, flexShrink:0 }}/>
+                  <span style={{ fontSize:10.5, fontWeight:700, color:'#9A9AA4' }}>{it.project_title}</span>
+                  <span style={{ fontSize:12.5, fontWeight:600, flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{it.title}</span>
+                  {it.due_date && <DuePill iso={it.due_date}/>}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ display:'flex', gap:8 }}>
+              <input value={newTitle} onChange={e => setNewTitle(e.target.value)} autoFocus
+                onKeyDown={e => e.key === 'Enter' && quickAddNew()}
+                placeholder="Task title — will be due today"
+                style={{ flex:1, height:34, padding:'0 11px', border:'1px solid #E5E5EA', borderRadius:8,
+                  fontSize:13, background:'#fff', outline:'none', boxSizing:'border-box' }}/>
+              <select value={newProject} onChange={e => setNewProject(e.target.value)}
+                style={{ height:34, border:'1px solid #E5E5EA', borderRadius:8, fontSize:12.5, padding:'0 8px',
+                  background:'#fff', cursor:'pointer', outline:'none', maxWidth:170 }}>
+                <option value="">Project…</option>
+                {activeProjects.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+              </select>
+              <button onClick={quickAddNew} disabled={saving || !newTitle.trim() || !newProject}
+                style={{ height:34, padding:'0 14px', borderRadius:8, fontSize:12.5, fontWeight:700, border:'none',
+                  cursor:'pointer', background:ACCENT, color:'#fff',
+                  opacity: (saving || !newTitle.trim() || !newProject) ? 0.5 : 1 }}>
+                Add
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Carry-over banner */}
+      {carryover.length > 0 && !coDismissed && (
+        <div style={{ display:'flex', alignItems:'center', gap:10, padding:'9px 12px', borderRadius:9,
+          background:'#FEF6E7', border:'1px solid #FDDCB8', marginBottom:12 }}>
+          <span style={{ fontSize:12.5, color:'#B45309', fontWeight:600, flex:1 }}>
+            {carryover.length} unfinished item{carryover.length !== 1 ? 's' : ''} from your last plan
+          </span>
+          <button onClick={carryOverAll}
+            style={{ height:26, padding:'0 11px', borderRadius:7, fontSize:12, fontWeight:700, border:'none',
+              cursor:'pointer', background:'#D97706', color:'#fff' }}>Carry over</button>
+          <button onClick={() => setCoDismissed(true)}
+            style={{ height:26, padding:'0 9px', borderRadius:7, fontSize:12, fontWeight:600,
+              border:'1px solid #FDDCB8', cursor:'pointer', background:'none', color:'#B45309' }}>Dismiss</button>
+        </div>
+      )}
+
+      {/* My plan */}
+      {(pinnedOpen.length > 0 || pinnedDone.length > 0) && (
+        <div style={{ marginBottom:12 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:ACCENT, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6 }}>
+            📌 My plan · {pinnedOpen.length + pinnedDone.length}
+          </div>
+          {pinnedOpen.map(it => <Row key={it.id} it={it} planRow/>)}
+          {pinnedDone.map(it => <Row key={it.id} it={it} planRow/>)}
+        </div>
+      )}
+
+      {/* Suggestions */}
+      {suggested.map(g => (
         <div key={g.key} style={{ marginBottom:10 }}>
           <div style={{ fontSize:11, fontWeight:700, color:g.color, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6 }}>
             {g.label} · {g.items.length}
           </div>
-          {g.items.map(it => (
-            <div key={it.id} onClick={() => onOpenProject(it.project_id)}
-              style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 10px', borderRadius:9,
-                border:'1px solid #F0F0F3', marginBottom:4, cursor:'pointer',
-                borderLeft:`4px solid ${it.project_color || ACCENT}` }}
-              onMouseEnter={e => e.currentTarget.style.background='#FAFAFB'}
-              onMouseLeave={e => e.currentTarget.style.background=''}>
-              <div style={{ flex:1, minWidth:0 }}>
-                <span style={{ fontSize:10.5, fontWeight:700, color:'#9A9AA4', marginRight:8 }}>{it.project_title}</span>
-                <span style={{ fontSize:13, fontWeight:600 }}>{it.title}</span>
-              </div>
-              <ContextChip tag={it.context_tag}/>
-              <EffortBadge size={it.effort_size} hours={it.effort_hours}/>
-              <WaitingPill waitingOn={it.waiting_on} contactName={it.waiting_contact_name} since={it.waiting_since}/>
-              <DuePill iso={it.due_date}/>
-            </div>
-          ))}
+          {g.items.map(it => <Row key={it.id} it={it}/>)}
         </div>
       ))}
+
+      {nothingToShow && (
+        <div style={{ fontSize:13, color:'#9A9AA4', textAlign:'center', padding:'14px 0' }}>
+          Nothing due and nothing planned — pull in a task or enjoy the calm.
+        </div>
+      )}
     </div>
   );
 }
@@ -3705,10 +3887,12 @@ function ProjectsView({ projects, onSelect, onProjectsChange, currentUserId, isA
       return a.title.localeCompare(b.title);
     });
 
-  // Load today's focus queue on mount — one call for overdue/today items across projects
+  // Load today's focus queue on mount — pinned plan items plus overdue/today across projects
   useEffect(() => {
     api.get('/projects/focus').then(r => {
-      setTodayItems((r.data.items || []).filter(it => it.due_bucket !== 'week'));
+      setTodayItems((r.data.items || []).filter(it =>
+        !['done','delivered','approved'].includes(it.status) &&
+        (it.pinned || ['overdue','today'].includes(it.due_bucket))));
     }).finally(() => setTodayLoaded(true));
   }, [projects]);
 
@@ -3839,7 +4023,7 @@ function ProjectsView({ projects, onSelect, onProjectsChange, currentUserId, isA
         <div style={{ marginBottom:22 }}>
           <div style={{ fontSize:12.5, fontWeight:700, color:'#DC2626', marginBottom:9, display:'flex', alignItems:'center', gap:6 }}>
             <span style={{ width:8, height:8, borderRadius:'50%', background:'#DC2626', display:'inline-block' }}/>
-            Due today or overdue · {todayItems.length}
+            Today's plan &amp; due · {todayItems.length}
           </div>
           <div style={{ display:'flex', gap:10, overflowX:'auto', paddingBottom:6 }}>
             {todayItems.map(it => (
@@ -3849,7 +4033,9 @@ function ProjectsView({ projects, onSelect, onProjectsChange, currentUserId, isA
                   borderLeft:`4px solid ${it.project_color}` }}
                 onMouseEnter={e=>e.currentTarget.style.boxShadow='0 3px 12px rgba(16,16,30,0.10)'}
                 onMouseLeave={e=>e.currentTarget.style.boxShadow='none'}>
-                <div style={{ fontSize:10.5, fontWeight:700, color:'#9A9AA4', marginBottom:4 }}>{it.project_title}</div>
+                <div style={{ fontSize:10.5, fontWeight:700, color:'#9A9AA4', marginBottom:4 }}>
+                  {it.pinned && <span title="On today's plan" style={{ marginRight:4 }}>📌</span>}{it.project_title}
+                </div>
                 <div style={{ display:'flex', alignItems:'center', gap:5, marginBottom:5 }}>
                   <SectionTypeBadge type={it.section_type}/>
                 </div>
@@ -4304,8 +4490,10 @@ export default function CRM() {
   const overdueCount = contacts.filter(c => c.owner_id === user.id && c.next_followup && diffDays(c.next_followup) <= 0).length
     + projectFollowups.filter(pf => pf.due_date && diffDays(pf.due_date) <= 0).length;
   const openTaskCount = tasks.filter(t => !t.completed && (t.assigned_to === user.id || t.created_by === user.id)).length;
-  const focusDueCount = (focusData?.counts?.overdue || 0) + (focusData?.counts?.today || 0);
-  const focusDueItems = (focusData?.items || []).filter(it => it.due_bucket !== 'week');
+  // Bell counts stay due-based regardless of pinning (pinned items leave the overdue/today counts)
+  const focusDueItems = (focusData?.items || []).filter(it =>
+    ['overdue','today'].includes(it.due_bucket) && !['done','delivered','approved'].includes(it.status));
+  const focusDueCount = focusDueItems.length;
 
   const isHRAdminUser   = user.role === 'admin' || user.hr_role === 'hr_admin';
   const isHRManagerUser = isHRAdminUser || user.hr_role === 'manager';
@@ -4826,7 +5014,7 @@ export default function CRM() {
               })()}
 
               {/* Today's focus queue */}
-              <FocusQueue onOpenProject={(id) => { setView('projects'); setActiveProjectId(id); }}/>
+              <FocusQueue projects={projects} onOpenProject={(id) => { setView('projects'); setActiveProjectId(id); }}/>
 
               {/* Projects at Risk + Active Projects strip */}
               {projects.filter(p => p.status === 'active').length > 0 && (() => {

@@ -22,6 +22,7 @@ app.use('/api/custom-fields', require('./routes/customFields'));
 app.use('/api/calendar', require('./routes/calendar'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/projects', require('./routes/projects'));
+app.use('/api/daily-focus', require('./routes/dailyFocus'));
 app.use('/api/projects/:projectId/milestones', require('./routes/projectMilestones'));
 app.use('/api/projects/:projectId/items',      require('./routes/projectItems'));
 app.use('/api/hr/employees',  require('./routes/hrEmployees'));

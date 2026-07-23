@@ -17,5 +17,5 @@ module.exports = {
     tenantId: process.env.GRAPH_TENANT_ID,
     redirectUri: process.env.GRAPH_REDIRECT_URI || 'http://localhost:3001/api/calendar/callback',
   },
-  appUrl: process.env.APP_URL || 'http://localhost:3001',
+  appUrl: process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3001',
 };

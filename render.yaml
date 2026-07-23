@@ -1,0 +1,20 @@
+# Render Blueprint — deploy with "New +" → "Blueprint" and this repo,
+# or create a single Web Service manually with the same settings.
+services:
+  - type: web
+    name: flux                 # becomes https://flux.onrender.com (or flux-xxxx if taken) — rename before first deploy if you prefer
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm --prefix client install && npm run build
+    startCommand: node server/index.js
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true    # Render generates a strong secret on first deploy
+      - key: DATABASE_URL
+        sync: false            # paste your Neon pooled connection string in the dashboard
+      # APP_URL is optional — the server falls back to RENDER_EXTERNAL_URL automatically.
+      # Set SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS / SMTP_FROM in the
+      # dashboard if you want the email digest.

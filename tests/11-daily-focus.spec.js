@@ -54,7 +54,8 @@ test.describe('Daily focus plan', () => {
   });
 
   test('pin a suggested item into My plan from the dashboard', async ({ page }) => {
-    // Today's focus widget lives on the CRM dashboard (default view)
+    // Today's focus widget lives on Projects > Overview
+    await nav(page, 'Overview');
     await expect(page.getByText("Today's focus")).toBeVisible({ timeout: 8000 });
     const pinBtn = rowButton(page, `PW Due Today ${TS}`, "Add to today's plan");
     await expect(pinBtn).toBeVisible({ timeout: 6000 });
@@ -65,6 +66,7 @@ test.describe('Daily focus plan', () => {
   });
 
   test('quick-add a new task creates it due today and pins it', async ({ page }) => {
+    await nav(page, 'Overview');
     await expect(page.getByText("Today's focus")).toBeVisible({ timeout: 8000 });
     await page.getByRole('button', { name: '+ Plan a task' }).click();
     await page.getByRole('button', { name: 'New task', exact: true }).click();
@@ -89,8 +91,8 @@ test.describe('Daily focus plan', () => {
     await page.getByRole('button', { name: /add item|save/i }).last().click();
     await page.waitForTimeout(800);
 
-    // Back to dashboard, pull it in
-    await nav(page, 'Dashboard');
+    // Back to the projects overview, pull it in
+    await nav(page, 'Overview');
     await expect(page.getByText("Today's focus")).toBeVisible({ timeout: 8000 });
     await page.getByRole('button', { name: '+ Plan a task' }).click();
     await page.getByPlaceholder('Search open items across your projects…').fill(`PW Undated ${TS}`);
@@ -101,6 +103,7 @@ test.describe('Daily focus plan', () => {
   });
 
   test('mark a planned item done updates the counter; unpin removes from plan', async ({ page }) => {
+    await nav(page, 'Overview');
     await expect(page.getByText("Today's focus")).toBeVisible({ timeout: 8000 });
     // Mark the quick-added task done
     const doneBtn = rowButton(page, `PW Quick ${TS}`, 'Mark done');

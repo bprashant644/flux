@@ -3199,6 +3199,46 @@ function ProjectsDashboard({ projects, onSelect }) {
           accent={lastPpc !== null ? (lastPpc >= 80 ? '#16A34A' : lastPpc >= 60 ? '#D97706' : '#DC2626') : undefined}/>
       </div>
 
+      {/* Today's focus queue */}
+      <FocusQueue projects={projects} onOpenProject={onSelect}/>
+
+      {/* Delivery Reliability (due date = commitment) */}
+      {ppc.length > 0 && (() => {
+        const lastFull = ppc.find(w => !w.is_current);
+        const ppcColor = (p) => p >= 70 ? '#16A34A' : p >= 40 ? '#D97706' : '#DC2626';
+        return (
+          <div style={{ marginTop:16, background:'#fff', border:'1px solid #ECECEF', borderRadius:14, padding:'16px 18px', boxShadow:'0 1px 2px rgba(16,16,30,0.04)' }}>
+            <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14 }}>
+              <Icon name="target" size={15} color={ACCENT}/>
+              <span style={{ fontSize:14.5, fontWeight:700 }}>Delivery Reliability</span>
+              {lastFull?.ppc != null && (
+                <span style={{ fontSize:22, fontWeight:800, fontFamily:"'IBM Plex Mono',monospace", color:ppcColor(lastFull.ppc), marginLeft:'auto' }}>
+                  {lastFull.ppc}%
+                </span>
+              )}
+            </div>
+            <div style={{ display:'flex', alignItems:'flex-end', gap:4, height:50 }}>
+              {[...ppc].reverse().map((w, i) => {
+                const h = w.ppc != null ? Math.max(4, Math.round(w.ppc * 50 / 100)) : 4;
+                const weekLabel = new Date(w.week_start).toLocaleDateString('en', { month:'short', day:'numeric' });
+                return (
+                  <div key={w.week_start} style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:4 }}>
+                    <div title={`${weekLabel}: ${w.ppc != null ? w.ppc+'%' : 'no data'} (${w.completed}/${w.total_committed})${w.is_current ? ' — in progress' : ''}`}
+                      style={{ width:'100%', height:h, borderRadius:3, background: w.ppc != null ? ppcColor(w.ppc) : '#E5E5EA',
+                        opacity: w.is_current ? 0.45 : 0.6 + (i / ppc.length) * 0.4,
+                        border: w.is_current ? '1px dashed #9A9AA4' : 'none', boxSizing:'border-box' }}/>
+                    <div style={{ fontSize:9, color:'#9A9AA4', whiteSpace:'nowrap' }}>{weekLabel}{w.is_current ? '*' : ''}</div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ fontSize:11.5, color:'#9A9AA4', marginTop:8 }}>
+              % of items due each week completed on or before their due date. A due date is a commitment. * = week in progress.
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Overdue follow-ups */}
       {overdueItems.length > 0 && (
         <div>
@@ -4375,7 +4415,6 @@ export default function CRM() {
   const [tasks, setTasks] = useState([]);
   const [customFieldDefs, setCustomFieldDefs] = useState([]);
   const [projects,        setProjects]        = useState([]);
-  const [ppcData,           setPpcData]           = useState([]);
   const [projectFollowups,  setProjectFollowups]  = useState([]);
   const [focusData,         setFocusData]         = useState(null);
   const [activeProjectId,    setActiveProjectId]    = useState(null);
@@ -4430,10 +4469,6 @@ export default function CRM() {
     setProjects(r.data);
   }, []);
 
-  const loadPpc = useCallback(async () => {
-    api.get('/projects/ppc').then(r => setPpcData(r.data)).catch(() => {});
-  }, []);
-
   const loadProjectFollowups = useCallback(async () => {
     api.get('/projects/followups-due').then(r => setProjectFollowups(r.data)).catch(() => {});
   }, []);
@@ -4448,7 +4483,6 @@ export default function CRM() {
     loadTasks();
     loadCustomFieldDefs();
     loadProjects();
-    loadPpc();
     loadProjectFollowups();
     loadFocus();
     if (isAdmin) loadUsers();
@@ -4976,89 +5010,6 @@ export default function CRM() {
                 </div>
               </div>
 
-              {/* Delivery Reliability (due date = commitment) */}
-              {ppcData.length > 0 && (() => {
-                const lastFull = ppcData.find(w => !w.is_current);
-                const ppcColor = (p) => p >= 70 ? '#16A34A' : p >= 40 ? '#D97706' : '#DC2626';
-                return (
-                  <div style={{ marginTop:16, background:'#fff', border:'1px solid #ECECEF', borderRadius:14, padding:'16px 18px', boxShadow:'0 1px 2px rgba(16,16,30,0.04)' }}>
-                    <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14 }}>
-                      <Icon name="target" size={15} color={ACCENT}/>
-                      <span style={{ fontSize:14.5, fontWeight:700 }}>Delivery Reliability</span>
-                      {lastFull?.ppc != null && (
-                        <span style={{ fontSize:22, fontWeight:800, fontFamily:"'IBM Plex Mono',monospace", color:ppcColor(lastFull.ppc), marginLeft:'auto' }}>
-                          {lastFull.ppc}%
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ display:'flex', alignItems:'flex-end', gap:4, height:50 }}>
-                      {[...ppcData].reverse().map((w, i) => {
-                        const h = w.ppc != null ? Math.max(4, Math.round(w.ppc * 50 / 100)) : 4;
-                        const weekLabel = new Date(w.week_start).toLocaleDateString('en', { month:'short', day:'numeric' });
-                        return (
-                          <div key={w.week_start} style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:4 }}>
-                            <div title={`${weekLabel}: ${w.ppc != null ? w.ppc+'%' : 'no data'} (${w.completed}/${w.total_committed})${w.is_current ? ' — in progress' : ''}`}
-                              style={{ width:'100%', height:h, borderRadius:3, background: w.ppc != null ? ppcColor(w.ppc) : '#E5E5EA',
-                                opacity: w.is_current ? 0.45 : 0.6 + (i / ppcData.length) * 0.4,
-                                border: w.is_current ? '1px dashed #9A9AA4' : 'none', boxSizing:'border-box' }}/>
-                            <div style={{ fontSize:9, color:'#9A9AA4', whiteSpace:'nowrap' }}>{weekLabel}{w.is_current ? '*' : ''}</div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div style={{ fontSize:11.5, color:'#9A9AA4', marginTop:8 }}>
-                      % of items due each week completed on or before their due date. A due date is a commitment. * = week in progress.
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Today's focus queue */}
-              <FocusQueue projects={projects} onOpenProject={(id) => { setView('projects'); setActiveProjectId(id); }}/>
-
-              {/* Projects at Risk + Active Projects strip */}
-              {projects.filter(p => p.status === 'active').length > 0 && (() => {
-                const activeProjs = projects.filter(p => p.status === 'active');
-                const atRisk = activeProjs.filter(p => Number(p.overdue_count) > 0)
-                  .sort((a,b) => Number(b.overdue_count) - Number(a.overdue_count));
-                const healthy = activeProjs.filter(p => Number(p.overdue_count) === 0);
-                return (
-                  <div style={{ marginTop:16, background:'#fff', border:'1px solid #ECECEF', borderRadius:14, padding:'16px 18px', boxShadow:'0 1px 2px rgba(16,16,30,0.04)' }}>
-                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14 }}>
-                      <div style={{ fontSize:14.5, fontWeight:700 }}>
-                        Projects
-                        {atRisk.length > 0 && (
-                          <span style={{ marginLeft:8, fontSize:11.5, fontWeight:700, padding:'2px 8px', borderRadius:7, background:'#FEF2F2', color:'#DC2626' }}>
-                            {atRisk.length} at risk
-                          </span>
-                        )}
-                      </div>
-                      <button onClick={() => setView('projects')} style={{ fontSize:12.5, color:ACCENT, fontWeight:600, background:'none', border:'none', cursor:'pointer' }}>View all</button>
-                    </div>
-                    <div style={{ display:'flex', gap:10, overflowX:'auto', paddingBottom:4 }}>
-                      {[...atRisk, ...healthy].slice(0, 8).map(p => (
-                        <button key={p.id} onClick={() => { setView('projects'); setActiveProjectId(p.id); }}
-                          style={{ flexShrink:0, width:200, background: Number(p.overdue_count) > 0 ? '#FFF5F5' : '#FAFAFB',
-                            border: `1px solid ${Number(p.overdue_count) > 0 ? '#FECACA' : '#EEEEF1'}`,
-                            borderLeft: `4px solid ${p.color || ACCENT}`, borderRadius:10, padding:'10px 12px',
-                            textAlign:'left', cursor:'pointer' }}>
-                          <div style={{ fontSize:13, fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{p.title}</div>
-                          {p.contact_name && <div style={{ fontSize:11.5, color:'#8A8A94', marginTop:2, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{p.contact_name}</div>}
-                          <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:7 }}>
-                            {Number(p.overdue_count) > 0 ? (
-                              <span style={{ fontSize:10.5, fontWeight:700, color:'#DC2626' }}>⚠ {p.overdue_count} overdue</span>
-                            ) : Number(p.item_count) > 0 ? (
-                              <span style={{ fontSize:10.5, color:'#6B6B76' }}>{p.item_count} open</span>
-                            ) : (
-                              <span style={{ fontSize:10.5, color:'#16A34A', fontWeight:600 }}>All clear</span>
-                            )}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })()}
             </div>
           )}
 

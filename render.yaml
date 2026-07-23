@@ -5,7 +5,9 @@ services:
     name: flux                 # becomes https://flux.onrender.com (or flux-xxxx if taken) — rename before first deploy if you prefer
     runtime: node
     plan: free
-    buildCommand: npm install && npm --prefix client install && npm run build
+    # --include=dev on the client install: NODE_ENV=production (set below) makes npm
+    # skip devDependencies otherwise, and vite (the build tool) lives there.
+    buildCommand: npm install && npm --prefix client install --include=dev && npm run build
     startCommand: node server/index.js
     healthCheckPath: /
     envVars:

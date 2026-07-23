@@ -212,13 +212,17 @@ function ContextChip({ tag }) {
   if (!m) return null;
   return <span style={{ fontSize:11, fontWeight:700, padding:'3px 7px', borderRadius:6, whiteSpace:'nowrap', color:m.color, background:m.bg }}>{m.label}</span>;
 }
-function WaitingPill({ waitingOn, contactName, since }) {
+function WaitingPill({ waitingOn, contactName, since, onClick }) {
   if (!waitingOn) return null;
   const days = since != null ? -diffDays(since) : null;
   const who = contactName || waitingOn;
   return (
-    <span title={`Waiting since ${since ? fmtDate(since) : '—'}`}
-      style={{ fontSize:11.5, fontWeight:700, padding:'4px 9px', borderRadius:7, whiteSpace:'nowrap', color:'#D97706', background:'#FEF6E7' }}>
+    <span
+      onClick={onClick ? e => { e.stopPropagation(); onClick(); } : undefined}
+      title={onClick ? `Open ${who} in CRM — waiting since ${since ? fmtDate(since) : '—'}` : `Waiting since ${since ? fmtDate(since) : '—'}`}
+      style={{ fontSize:11.5, fontWeight:700, padding:'4px 9px', borderRadius:7, whiteSpace:'nowrap',
+        color:'#D97706', background:'#FEF6E7', cursor: onClick ? 'pointer' : 'default',
+        textDecoration: onClick ? 'underline dotted' : 'none' }}>
       ⏳ {who}{days > 0 ? ` · ${days}d` : ''}
     </span>
   );
@@ -1790,7 +1794,7 @@ function AddMilestoneModal({ projectId, existingCount, editMilestone, onClose, o
 }
 
 // ── TimelineTab ───────────────────────────────────────────────────────────────
-function TimelineTab({ projectId, milestones, items, loadMilestones, loadItems, users }) {
+function TimelineTab({ projectId, milestones, items, loadMilestones, loadItems, users, openEditItem }) {
   const [showAddMs, setShowAddMs]   = useState(false);
   const [editMs, setEditMs]         = useState(null);
   const [delMsId, setDelMsId]       = useState(null);
@@ -1901,10 +1905,13 @@ function TimelineTab({ projectId, milestones, items, loadMilestones, loadItems, 
                 const isDone       = ['done','delivered','approved'].includes(it.status);
                 const isOverdueItem = !isDone && it.due_date && diffDays(it.due_date) < 0;
                 return (
-                  <div key={it.id} style={{ background: isDone ? '#FAFAFA' : '#fff', borderRadius:8, padding:'8px 10px',
-                    border:`1px solid ${isOverdueItem ? '#FECACA' : '#EEEEF1'}`,
-                    borderLeft: isOverdueItem ? '3px solid #DC2626' : '1px solid #EEEEF1',
-                    opacity: isDone ? 0.6 : 1 }}>
+                  <div key={it.id} onClick={() => openEditItem?.(it)}
+                    style={{ background: isDone ? '#FAFAFA' : '#fff', borderRadius:8, padding:'8px 10px',
+                      border:`1px solid ${isOverdueItem ? '#FECACA' : '#EEEEF1'}`,
+                      borderLeft: isOverdueItem ? '3px solid #DC2626' : '1px solid #EEEEF1',
+                      opacity: isDone ? 0.6 : 1, cursor: openEditItem ? 'pointer' : 'default' }}
+                    onMouseEnter={e => e.currentTarget.style.borderColor='#CCCCD8'}
+                    onMouseLeave={e => e.currentTarget.style.borderColor = isOverdueItem ? '#FECACA' : '#EEEEF1'}>
                     <div style={{ display:'flex', alignItems:'flex-start', gap:6 }}>
                       <div style={{ flex:1, minWidth:0 }}>
                         <SectionTypeBadge type={it.section_type} />
@@ -2259,7 +2266,7 @@ function OverviewTab({ items, milestones, openEditItem }) {
 // ── TasksTab (unified: tasks + deliverables + follow-ups) ─────────────────────
 const RECURRENCE_LABELS = { none:'', daily:'Daily', weekly:'Weekly', biweekly:'Every 2 wks', monthly:'Monthly' };
 
-function TasksTab({ items, updateItem, deleteItem, openAddItem, openEditItem }) {
+function TasksTab({ items, updateItem, deleteItem, openAddItem, openEditItem, openContact }) {
   const actionable = items.filter(it => ['task','deliverable','followup'].includes(it.section_type));
   const [showDone, setShowDone] = useState(false);
 
@@ -2367,7 +2374,8 @@ function TasksTab({ items, updateItem, deleteItem, openAddItem, openEditItem }) 
           onChangeI={v => updateItem(it.id, { importance: v })}
           onChangeU={v => updateItem(it.id, { urgency: v })} />
         {it.assignee_name && <Avatar name={it.assignee_name} color={it.assignee_color} size={24}/>}
-        {!finished && <WaitingPill waitingOn={it.waiting_on} contactName={it.waiting_contact_name} since={it.waiting_since}/>}
+        {!finished && <WaitingPill waitingOn={it.waiting_on} contactName={it.waiting_contact_name} since={it.waiting_since}
+          onClick={it.waiting_contact_id && openContact ? () => openContact(it.waiting_contact_id) : undefined}/>}
         {!finished && it.due_date && <DuePill iso={it.due_date}/>}
         <button onClick={() => openEditItem(it)} style={{ color:'#B0B0BA', background:'none', border:'none', cursor:'pointer', padding:'3px' }} title="Edit">
           <Icon name="pencil" size={13}/>
@@ -2557,7 +2565,7 @@ function ProjectNotesSection({ projectId, items, loadItems }) {
 
 
 // ── ProjectDetail ─────────────────────────────────────────────────────────────
-function ProjectDetail({ projectId, onBack, currentUserId, isAdmin, users, contacts, deals, onProjectDeleted, onProjectUpdated }) {
+function ProjectDetail({ projectId, onBack, currentUserId, isAdmin, users, contacts, deals, onProjectDeleted, onProjectUpdated, onOpenContact }) {
   const [project,    setProject]    = useState(null);
   const [milestones, setMilestones] = useState([]);
   const [items,      setItems]      = useState([]);
@@ -2721,7 +2729,7 @@ function ProjectDetail({ projectId, onBack, currentUserId, isAdmin, users, conta
       {activeTab === 'overview' && (
         <div>
           <TimelineTab projectId={projectId} milestones={milestones} items={items}
-            loadMilestones={loadMilestones} loadItems={loadItems} users={users}/>
+            loadMilestones={loadMilestones} loadItems={loadItems} users={users} openEditItem={openEditItem}/>
           <div style={{ marginTop:26 }}>
             <OverviewTab items={items} milestones={milestones} openEditItem={openEditItem}/>
           </div>
@@ -2731,7 +2739,8 @@ function ProjectDetail({ projectId, onBack, currentUserId, isAdmin, users, conta
         <QuadrantTab projectId={projectId} items={items} updateItem={updateItem} deleteItem={deleteItem} openAddItem={openAddItem} openEditItem={openEditItem}/>
       )}
       {activeTab === 'tasks' && (
-        <TasksTab items={items} updateItem={updateItem} deleteItem={deleteItem} openAddItem={openAddItem} openEditItem={openEditItem}/>
+        <TasksTab items={items} updateItem={updateItem} deleteItem={deleteItem} openAddItem={openAddItem} openEditItem={openEditItem}
+          openContact={onOpenContact ? (cid) => { const c = (contacts||[]).find(x => x.id === cid); if (c) onOpenContact(c); } : undefined}/>
       )}
 
       {/* Project Notes scratchpad — always visible below tab content */}
@@ -5067,6 +5076,7 @@ export default function CRM() {
                       deals={deals}
                       onProjectDeleted={() => { setActiveProjectId(null); loadProjects(); }}
                       onProjectUpdated={loadProjects}
+                      onOpenContact={openDetail}
                     />
                   ) : (
                     <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
@@ -5101,6 +5111,7 @@ export default function CRM() {
                     deals={deals}
                     onProjectDeleted={() => { setActiveProjectId(null); loadProjects(); }}
                     onProjectUpdated={loadProjects}
+                      onOpenContact={openDetail}
                   />
                 : <ProjectsView
                     projects={projects}

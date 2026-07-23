@@ -3447,7 +3447,7 @@ function QuickAddTaskModal({ projects, users, onClose, onSaved }) {
 }
 
 // ── GlobalQuadrantView ────────────────────────────────────────────────────────
-function GlobalQuadrantView({ currentUserId, onViewModeChange }) {
+function GlobalQuadrantView({ currentUserId, onViewModeChange, onOpenProject }) {
   const [items,          setItems]          = useState([]);
   const [loading,        setLoading]        = useState(true);
   const [myOnly,         setMyOnly]         = useState(false);
@@ -3508,8 +3508,13 @@ function GlobalQuadrantView({ currentUserId, onViewModeChange }) {
         </div>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:3, flex:1 }}>
           {cellItems.map(it => (
-            <div key={it.id} style={{ background:'#fff', borderRadius:6, padding:'4px 7px',
-              border:'1px solid #EEEEF1', opacity: isDrop ? 0.55 : 1 }}>
+            <div key={it.id} onClick={() => onOpenProject?.(it.project_id)}
+              title={`Open ${it.project_title}`}
+              style={{ background:'#fff', borderRadius:6, padding:'4px 7px',
+                border:'1px solid #EEEEF1', opacity: isDrop ? 0.55 : 1,
+                cursor: onOpenProject ? 'pointer' : 'default' }}
+              onMouseEnter={e => e.currentTarget.style.borderColor='#CCCCD8'}
+              onMouseLeave={e => e.currentTarget.style.borderColor='#EEEEF1'}>
               <div style={{ display:'flex', alignItems:'center', gap:3, marginBottom:2 }}>
                 <span style={{ width:5, height:5, borderRadius:'50%', background: it.project_color || ACCENT, flexShrink:0 }}/>
                 <span style={{ fontSize:9.5, color:'#8A8A94',
@@ -3607,8 +3612,13 @@ function GlobalQuadrantView({ currentUserId, onViewModeChange }) {
               </div>
               <div style={{ display:'flex', gap:8, overflowX:'auto', paddingBottom:8 }}>
                 {triage.map(it => (
-                  <div key={it.id} style={{ minWidth:220, background:'#fff', borderRadius:10,
-                    padding:'10px 12px', border:'1px solid #EEEEF1', flexShrink:0 }}>
+                  <div key={it.id} onClick={() => onOpenProject?.(it.project_id)}
+                    title={`Open ${it.project_title}`}
+                    style={{ minWidth:220, background:'#fff', borderRadius:10,
+                      padding:'10px 12px', border:'1px solid #EEEEF1', flexShrink:0,
+                      cursor: onOpenProject ? 'pointer' : 'default' }}
+                    onMouseEnter={e => e.currentTarget.style.borderColor='#CCCCD8'}
+                    onMouseLeave={e => e.currentTarget.style.borderColor='#EEEEF1'}>
                     <div style={{ display:'flex', alignItems:'center', gap:4, marginBottom:4 }}>
                       <span style={{ width:7, height:7, borderRadius:'50%', background: it.project_color || ACCENT, flexShrink:0 }}/>
                       <span style={{ fontSize:10.5, fontWeight:600, color:'#6B6B76',
@@ -3617,7 +3627,7 @@ function GlobalQuadrantView({ currentUserId, onViewModeChange }) {
                     <SectionTypeBadge type={it.section_type}/>
                     <div style={{ fontSize:12.5, fontWeight:600, marginTop:5, marginBottom:8,
                       whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{it.title}</div>
-                    <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+                    <div style={{ display:'flex', gap:6, alignItems:'center' }} onClick={e => e.stopPropagation()}>
                       <IUBadge
                         importance={it.importance} urgency={it.urgency}
                         onChangeI={v => updateItem(it.project_id, it.id, { importance: v })}
@@ -5004,10 +5014,11 @@ export default function CRM() {
 
           {/* Projects */}
           {view === 'projects' && (
-            projectViewMode === 'quadrant' ? (
+            projectViewMode === 'quadrant' && !activeProjectId ? (
               <GlobalQuadrantView
                 currentUserId={user.id}
                 onViewModeChange={setProjectView}
+                onOpenProject={setActiveProjectId}
               />
             ) : projectViewMode === 'split' ? (
               <div style={{ display:'flex', gap:0, margin:'-24px -26px', height:'calc(100vh - 62px)', overflow:'hidden' }}>

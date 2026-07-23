@@ -1672,9 +1672,14 @@ function AddItemModal({ projectId, milestones, users, contacts, defaults = {}, e
               </div>
               <div>
                 <label style={labelStyle}>Waiting on contact (optional)</label>
-                <select value={form.waiting_contact_id} onChange={e => set('waiting_contact_id', e.target.value)}
-                  disabled={!form.waiting_on.trim()}
-                  style={{ ...inpStyle, cursor:'pointer', opacity: form.waiting_on.trim() ? 1 : 0.5 }}>
+                <select value={form.waiting_contact_id}
+                  onChange={e => {
+                    const cid = e.target.value;
+                    const c = (contacts||[]).find(x => x.id === cid);
+                    setForm(f => ({ ...f, waiting_contact_id: cid,
+                      waiting_on: c && !f.waiting_on.trim() ? c.name : f.waiting_on }));
+                  }}
+                  style={{ ...inpStyle, cursor:'pointer' }}>
                   <option value="">— Not linked —</option>
                   {(contacts||[]).map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` · ${c.company}` : ''}</option>)}
                 </select>

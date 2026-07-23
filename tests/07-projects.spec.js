@@ -50,14 +50,15 @@ test.describe('Projects', () => {
   });
 
   test('dashboard view: KPI strip shows values without NaN or undefined', async ({ page }) => {
-    const dashBtn = page.getByRole('button', { name: /dashboard/i }).first();
+    // Projects module dashboard is the sidebar "Overview" entry
+    const dashBtn = page.locator('aside').getByRole('button', { name: 'Overview', exact: true }).first();
     if (await dashBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
       await dashBtn.click();
       await page.waitForTimeout(800);
       const body = await page.textContent('body');
       await expect(page.getByText('NaN', { exact: true })).not.toBeVisible();
       await expect(page.getByText('undefined', { exact: true })).not.toBeVisible();
-      expect(/active projects|open items|overdue|ppc/i.test(body)).toBeTruthy();
+      expect(/active projects|open items|overdue|reliability/i.test(body)).toBeTruthy();
     }
   });
 
@@ -238,6 +239,79 @@ test.describe('Projects', () => {
       expect(/do first|schedule|delegate|drop|triage|no item|no tasks|add tasks/i.test(body)).toBeTruthy();
       await expect(page.getByText(/something went wrong/i)).not.toBeVisible();
     }
+  });
+
+  // ── Insights features ─────────────────────────────────────────────────────
+
+  test('add item modal: S/M/L effort button prefills hours', async ({ page }) => {
+    await openProject(page, PROJECT_TITLE);
+    const tabBtn = page.getByRole('button', { name: 'Tasks', exact: true }).first();
+    if (!await tabBtn.isVisible({ timeout: 3000 }).catch(() => false)) return;
+    await tabBtn.click();
+    await page.waitForTimeout(300);
+    const addBtn = page.getByRole('button', { name: 'Add', exact: true }).first();
+    if (!await addBtn.isVisible({ timeout: 2000 }).catch(() => false)) return;
+    await addBtn.click();
+    await page.waitForTimeout(300);
+
+    // Click the "M" effort button — hours input should become 4
+    const mBtn = page.getByRole('button', { name: 'M', exact: true }).first();
+    await expect(mBtn).toBeVisible({ timeout: 3000 });
+    await mBtn.click();
+    await expect(page.getByPlaceholder('hrs')).toHaveValue('4');
+    // Cancel — no item created
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  });
+
+  test('waiting-on set via modal shows amber pill on row', async ({ page }) => {
+    await openProject(page, PROJECT_TITLE);
+    const ok = await addItem(page, 'Tasks', `PW Waiting ${TS}`, async (p) => {
+      await p.getByPlaceholder(/client approval, vendor/i).fill('vendor quote');
+    });
+    if (!ok) return;
+    await expect(page.getByText(/⏳ vendor quote/).first()).toBeVisible({ timeout: 5000 });
+  });
+
+  test('deliverable checklist shows progress chip', async ({ page }) => {
+    await openProject(page, PROJECT_TITLE);
+    const tabBtn = page.getByRole('button', { name: 'Deliverables', exact: true }).first();
+    if (!await tabBtn.isVisible({ timeout: 3000 }).catch(() => false)) return;
+    await tabBtn.click();
+    await page.waitForTimeout(300);
+    const addBtn = page.getByRole('button', { name: 'Add', exact: true }).first();
+    if (!await addBtn.isVisible({ timeout: 2000 }).catch(() => false)) return;
+    await addBtn.click();
+    await page.waitForTimeout(300);
+
+    const delivTypeBtn = page.getByRole('button', { name: 'Deliverable', exact: true }).first();
+    if (await delivTypeBtn.isVisible({ timeout: 1000 }).catch(() => false)) await delivTypeBtn.click();
+
+    await page.getByPlaceholder('Enter a title…').fill(`PW DoD Deliverable ${TS}`);
+    // Add two checklist steps
+    await page.getByRole('button', { name: '+ Add step' }).click();
+    await page.getByPlaceholder('Checklist step…').last().fill('draft it');
+    await page.getByRole('button', { name: '+ Add step' }).click();
+    await page.getByPlaceholder('Checklist step…').last().fill('review it');
+    await page.getByRole('button', { name: /add item|save/i }).last().click();
+    await page.waitForTimeout(800);
+
+    await expect(page.getByText('☑ 0/2').first()).toBeVisible({ timeout: 5000 });
+  });
+
+  test('no commit-star bookmark button on item rows', async ({ page }) => {
+    await openProject(page, PROJECT_TITLE);
+    const tabBtn = page.getByRole('button', { name: 'Tasks', exact: true }).first();
+    if (await tabBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await tabBtn.click();
+      await page.waitForTimeout(400);
+      await expect(page.getByTitle(/commit to this week/i)).not.toBeVisible();
+    }
+  });
+
+  test('project cards show a health badge', async ({ page }) => {
+    await page.waitForTimeout(800);
+    const badge = page.getByText(/^(On track|At risk|Idle|Stale|Needs triage)$/).first();
+    await expect(badge).toBeVisible({ timeout: 6000 });
   });
 
   test('back button "← Projects" returns to project list', async ({ page }) => {

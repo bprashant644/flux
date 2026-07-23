@@ -20,7 +20,10 @@ router.get('/', verifyJWT, async (req, res) => {
               d.title AS deal_title,
               COALESCE(ic.total,0)   AS item_count,
               COALESCE(io.overdue,0) AS overdue_count,
-              ed.earliest_due        AS earliest_due_date
+              ed.earliest_due        AS earliest_due_date,
+              COALESCE(tg.triage,0)  AS triage_count,
+              la.last_activity       AS last_item_activity,
+              COALESCE(la.open_effort_hours,0)::float8 AS open_effort_hours
        FROM projects p
        LEFT JOIN users    u  ON u.id = p.owner_id
        LEFT JOIN contacts c  ON c.id = p.contact_id
@@ -48,6 +51,22 @@ router.get('/', verifyJWT, async (req, res) => {
            AND due_date IS NOT NULL
          GROUP BY project_id
        ) ed ON ed.project_id = p.id
+       LEFT JOIN (
+         SELECT project_id, COUNT(*) AS triage
+         FROM project_items
+         WHERE status NOT IN ('done','delivered','approved')
+           AND section_type IN ('task','deliverable','followup')
+           AND importance IS NULL AND urgency IS NULL
+         GROUP BY project_id
+       ) tg ON tg.project_id = p.id
+       LEFT JOIN (
+         SELECT project_id,
+                MAX(updated_at) AS last_activity,
+                SUM(effort_hours) FILTER (WHERE status NOT IN ('done','delivered','approved')
+                  AND section_type IN ('task','deliverable','followup')) AS open_effort_hours
+         FROM project_items
+         GROUP BY project_id
+       ) la ON la.project_id = p.id
        WHERE (p.owner_id = $1 OR p.created_by = $1)
        ORDER BY p.created_at DESC`,
       [req.user.id]
@@ -75,7 +94,7 @@ router.get('/weekly-review', verifyJWT, async (req, res) => {
   const uid = req.user.id;
   const access = 'AND (p.owner_id = $1 OR p.created_by = $1)';
   try {
-    const [triage, overdueFollowups, stalled, milestones] = await Promise.all([
+    const [triage, overdueFollowups, stalled, milestones, waiting] = await Promise.all([
       pool.query(`
         SELECT pi.id, pi.title, pi.section_type, pi.due_date,
                p.id AS project_id, p.title AS project_title, p.color AS project_color
@@ -115,12 +134,24 @@ router.get('/weekly-review', verifyJWT, async (req, res) => {
           AND pm.due_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days'
           ${access}
         ORDER BY pm.due_date ASC`, [uid]),
+      pool.query(`
+        SELECT pi.id, pi.title, pi.section_type, pi.waiting_on, pi.waiting_since, pi.due_date,
+               c.name AS waiting_contact_name,
+               p.id AS project_id, p.title AS project_title, p.color AS project_color
+        FROM project_items pi JOIN projects p ON p.id = pi.project_id
+        LEFT JOIN contacts c ON c.id = pi.waiting_contact_id
+        WHERE p.status = 'active'
+          AND pi.status NOT IN ('done','delivered','approved')
+          AND pi.waiting_on IS NOT NULL
+          ${access}
+        ORDER BY pi.waiting_since ASC NULLS LAST LIMIT 20`, [uid]),
     ]);
     res.json({
       triage:           triage.rows,
       overdueFollowups: overdueFollowups.rows,
       stalled:          stalled.rows,
       milestones:       milestones.rows,
+      waiting:          waiting.rows,
     });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Server error' }); }
 });
@@ -150,26 +181,73 @@ router.get('/followups-due', verifyJWT, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Server error' }); }
 });
 
-// GET /api/projects/ppc  — commitment reliability (planned percent complete)
+// GET /api/projects/ppc  — delivery reliability: a due date is a commitment.
+// Items are grouped by the week their due_date falls in; "completed" means the item
+// reached a done status on or before its due date.
 router.get('/ppc', verifyJWT, async (req, res) => {
   const uid = req.user.id;
   try {
     const { rows } = await pool.query(`
       SELECT
-        TO_CHAR(DATE_TRUNC('week', pi.committed_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS week_start,
-        COUNT(*)::int                                                                   AS total_committed,
-        COUNT(*) FILTER (WHERE pi.status IN ('done','delivered','approved'))::int       AS completed
+        TO_CHAR(DATE_TRUNC('week', pi.due_date), 'YYYY-MM-DD') AS week_start,
+        COUNT(*)::int                                          AS total_committed,
+        COUNT(*) FILTER (
+          WHERE pi.status IN ('done','delivered','approved')
+            AND pi.completed_at::date <= pi.due_date
+        )::int                                                 AS completed
       FROM project_items pi
       JOIN projects p ON p.id = pi.project_id
-      WHERE pi.committed = TRUE
-        AND pi.committed_at >= NOW() - INTERVAL '8 weeks'
+      WHERE p.status = 'active'
+        AND pi.section_type IN ('task','deliverable','followup')
+        AND pi.due_date IS NOT NULL
+        AND pi.due_date >= DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '7 weeks'
+        AND pi.due_date <  DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '1 week'
         AND (pi.assignee_id = $1 OR pi.created_by = $1)
       GROUP BY 1 ORDER BY 1 DESC
     `, [uid]);
+    const { rows: [{ cw }] } = await pool.query(
+      `SELECT TO_CHAR(DATE_TRUNC('week', CURRENT_DATE), 'YYYY-MM-DD') AS cw`);
     res.json(rows.map(r => ({
       ...r,
       ppc: r.total_committed > 0 ? Math.round(r.completed / r.total_committed * 100) : null,
+      is_current: r.week_start === cw,
     })));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Server error' }); }
+});
+
+// GET /api/projects/focus — personal daily focus queue (assignee-scoped like /ppc)
+router.get('/focus', verifyJWT, async (req, res) => {
+  const uid = req.user.id;
+  try {
+    const { rows } = await pool.query(`
+      SELECT pi.id, pi.title, pi.section_type, pi.status, pi.due_date,
+             pi.importance, pi.urgency, pi.effort_size, pi.effort_hours,
+             pi.context_tag, pi.waiting_on, pi.waiting_since, pi.checklist,
+             CASE WHEN pi.due_date < CURRENT_DATE THEN 'overdue'
+                  WHEN pi.due_date = CURRENT_DATE THEN 'today'
+                  ELSE 'week' END AS due_bucket,
+             c.name AS waiting_contact_name,
+             p.id AS project_id, p.title AS project_title, p.color AS project_color
+      FROM project_items pi
+      JOIN projects p ON p.id = pi.project_id
+      LEFT JOIN contacts c ON c.id = pi.waiting_contact_id
+      WHERE p.status = 'active'
+        AND pi.section_type IN ('task','deliverable','followup')
+        AND pi.status NOT IN ('done','delivered','approved')
+        AND (pi.assignee_id = $1 OR pi.created_by = $1)
+        AND pi.due_date IS NOT NULL
+        AND pi.due_date <= CURRENT_DATE + INTERVAL '7 days'
+      ORDER BY
+        CASE WHEN pi.due_date < CURRENT_DATE THEN 0
+             WHEN pi.due_date = CURRENT_DATE THEN 1 ELSE 2 END,
+        (COALESCE(pi.urgency,0) + COALESCE(pi.importance,0)) DESC,
+        pi.due_date ASC,
+        COALESCE(pi.effort_hours, 4) ASC
+      LIMIT 25
+    `, [uid]);
+    const counts = { overdue: 0, today: 0, week: 0 };
+    for (const r of rows) counts[r.due_bucket]++;
+    res.json({ items: rows, counts });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Server error' }); }
 });
 

@@ -29,11 +29,13 @@ router.get('/', verifyJWT, async (req, res) => {
       `SELECT pi.*,
               u.name  AS assignee_name,  u.color AS assignee_color,
               cb.name AS created_by_name, cb.color AS created_by_color,
-              fc.name AS followup_contact_name, fc.company AS followup_contact_company
+              fc.name AS followup_contact_name, fc.company AS followup_contact_company,
+              wc.name AS waiting_contact_name
        FROM project_items pi
        LEFT JOIN users    u  ON u.id  = pi.assignee_id
        LEFT JOIN users    cb ON cb.id = pi.created_by
        LEFT JOIN contacts fc ON fc.id = pi.followup_contact_id
+       LEFT JOIN contacts wc ON wc.id = pi.waiting_contact_id
        WHERE ${conditions.join(' AND ')}
        ORDER BY pi.created_at ASC`,
       vals
@@ -44,7 +46,8 @@ router.get('/', verifyJWT, async (req, res) => {
 
 // POST /api/projects/:projectId/items
 router.post('/', verifyJWT, async (req, res) => {
-  const { section_type, title, body, status, importance, urgency, assignee_id, due_date, milestone_id, doc_type, sync_to_crm, followup_contact_id, recurrence } = req.body;
+  const { section_type, title, body, status, importance, urgency, assignee_id, due_date, milestone_id, doc_type, sync_to_crm, followup_contact_id, recurrence,
+          effort_size, effort_hours, waiting_on, waiting_contact_id, checklist, context_tag } = req.body;
   if (!title) return res.status(400).json({ error: 'title required' });
   if (!VALID_TYPES.includes(section_type)) return res.status(400).json({ error: 'invalid section_type' });
   try {
@@ -60,8 +63,9 @@ router.post('/', verifyJWT, async (req, res) => {
       `INSERT INTO project_items
          (project_id, milestone_id, section_type, title, body, status,
           importance, urgency, assignee_id, due_date, doc_type, sync_to_crm,
-          followup_contact_id, recurrence, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+          followup_contact_id, recurrence, created_by,
+          effort_size, effort_hours, waiting_on, waiting_contact_id, waiting_since, checklist, context_tag)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING *`,
       [
         req.params.projectId,
         milestone_id || null,
@@ -78,6 +82,13 @@ router.post('/', verifyJWT, async (req, res) => {
         section_type === 'followup' ? (followup_contact_id || null) : null,
         section_type === 'followup' ? (recurrence || 'none') : 'none',
         req.user.id,
+        effort_size || null,
+        effort_hours || null,
+        waiting_on || null,
+        waiting_contact_id || null,
+        waiting_on ? new Date() : null,
+        Array.isArray(checklist) ? JSON.stringify(checklist) : null,
+        context_tag || null,
       ]
     );
     res.status(201).json(rows[0]);
@@ -97,7 +108,8 @@ router.put('/:id', verifyJWT, async (req, res) => {
     if (!ex[0]) return res.status(404).json({ error: 'Not found' });
 
     const item = ex[0];
-    const allowed = ['title','body','status','assignee_id','due_date','milestone_id','doc_type','sync_to_crm','followup_contact_id','recurrence','committed'];
+    const allowed = ['title','body','status','assignee_id','due_date','milestone_id','doc_type','sync_to_crm','followup_contact_id','recurrence','committed',
+                     'effort_size','effort_hours','waiting_on','waiting_contact_id','context_tag'];
     const fields = []; const vals = []; let i = 1;
 
     for (const k of allowed) {
@@ -107,12 +119,29 @@ router.put('/:id', verifyJWT, async (req, res) => {
       }
     }
 
+    // checklist: JSONB array — must stringify (pg would render a JS array as a PG array literal)
+    if (req.body.checklist !== undefined) {
+      fields.push(`checklist=$${i++}`);
+      vals.push(Array.isArray(req.body.checklist) ? JSON.stringify(req.body.checklist) : null);
+    }
+
     // Auto-stamp committed_at when commitment is first set
     if (req.body.committed === true && !item.committed) {
       fields.push(`committed_at=NOW()`);
     }
     if (req.body.committed === false) {
       fields.push(`committed_at=NULL`);
+    }
+
+    // waiting_since: stamp when waiting_on goes empty→set; clear (with contact) when cleared
+    if (req.body.waiting_on !== undefined) {
+      const nowWaiting = !!req.body.waiting_on;
+      if (nowWaiting && !item.waiting_on) {
+        fields.push(`waiting_since=CURRENT_DATE`);
+      } else if (!nowWaiting) {
+        fields.push(`waiting_since=NULL`);
+        if (req.body.waiting_contact_id === undefined) fields.push(`waiting_contact_id=NULL`);
+      }
     }
 
     // Stamp completed_at when transitioning into a done state; clear when reopened

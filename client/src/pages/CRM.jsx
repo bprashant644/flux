@@ -199,6 +199,48 @@ function Avatar({ name, color, size = 28 }) {
   );
 }
 
+// ── Effort / waiting / health helpers ────────────────────────────────────────
+const EFFORT_DEFAULT_HOURS = { S:2, M:4, L:8 };
+const CONTEXT_TAGS = { deep:{ label:'Deep work', color:'#7C3AED', bg:'#F5F3FF' }, calls:{ label:'Calls', color:'#0891B2', bg:'#ECFEFF' }, admin:{ label:'Admin', color:'#64748B', bg:'#F1F5F9' } };
+function EffortBadge({ size, hours }) {
+  if (!size && !hours) return null;
+  const label = size ? `${size}${hours ? ` · ${+hours}h` : ''}` : `${+hours}h`;
+  return <span title="Effort estimate" style={{ fontSize:11, fontWeight:700, padding:'3px 7px', borderRadius:6, whiteSpace:'nowrap', color:'#6B6B76', background:'#F2F2F5' }}>{label}</span>;
+}
+function ContextChip({ tag }) {
+  const m = CONTEXT_TAGS[tag];
+  if (!m) return null;
+  return <span style={{ fontSize:11, fontWeight:700, padding:'3px 7px', borderRadius:6, whiteSpace:'nowrap', color:m.color, background:m.bg }}>{m.label}</span>;
+}
+function WaitingPill({ waitingOn, contactName, since }) {
+  if (!waitingOn) return null;
+  const days = since != null ? -diffDays(since) : null;
+  const who = contactName || waitingOn;
+  return (
+    <span title={`Waiting since ${since ? fmtDate(since) : '—'}`}
+      style={{ fontSize:11.5, fontWeight:700, padding:'4px 9px', borderRadius:7, whiteSpace:'nowrap', color:'#D97706', background:'#FEF6E7' }}>
+      ⏳ {who}{days > 0 ? ` · ${days}d` : ''}
+    </span>
+  );
+}
+function computeHealth(p) {
+  if (p.status !== 'active') return null;
+  const open = +p.item_count || 0;
+  const overdue = +p.overdue_count || 0;
+  const triage = +p.triage_count || 0;
+  const lastActivity = p.last_item_activity ? diffDays(p.last_item_activity) : null;
+  if (open === 0) return { label:'Idle', color:'#6B6B76', bg:'#F2F2F5' };
+  if (overdue >= 3 || overdue / open >= 1/3) return { label:'At risk', color:'#DC2626', bg:'#FEF2F2' };
+  if (lastActivity !== null && lastActivity <= -14) return { label:'Stale', color:'#D97706', bg:'#FEF6E7' };
+  if (triage >= 5) return { label:'Needs triage', color:'#D97706', bg:'#FEF6E7' };
+  return { label:'On track', color:'#16A34A', bg:'#ECFDF3' };
+}
+function HealthBadge({ project }) {
+  const h = computeHealth(project);
+  if (!h) return null;
+  return <span style={{ fontSize:11, fontWeight:700, padding:'3px 8px', borderRadius:6, whiteSpace:'nowrap', color:h.color, background:h.bg }}>{h.label}</span>;
+}
+
 // ── Project constants ────────────────────────────────────────────────────────
 const SECTION_TYPE_META = {
   task:        { label:'Task',        color:'#2563EB', bg:'#EFF4FF',  icon:'task'   },
@@ -1376,6 +1418,12 @@ function AddItemModal({ projectId, milestones, users, contacts, defaults = {}, e
     sync_to_crm:         editItem?.sync_to_crm         || false,
     followup_contact_id: editItem?.followup_contact_id || '',
     recurrence:          editItem?.recurrence          || 'none',
+    effort_size:         editItem?.effort_size         || '',
+    effort_hours:        editItem?.effort_hours        != null ? String(+editItem.effort_hours) : '',
+    waiting_on:          editItem?.waiting_on          || '',
+    waiting_contact_id:  editItem?.waiting_contact_id  || '',
+    context_tag:         editItem?.context_tag         || '',
+    checklist:           editItem?.checklist           || [],
   });
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState('');
@@ -1399,6 +1447,13 @@ function AddItemModal({ projectId, milestones, users, contacts, defaults = {}, e
         sync_to_crm:         form.sync_to_crm,
         followup_contact_id: form.section_type === 'followup' ? (form.followup_contact_id || null) : null,
         recurrence:          form.section_type === 'followup' ? form.recurrence : 'none',
+        effort_size:         form.effort_size          || null,
+        effort_hours:        form.effort_hours !== '' ? +form.effort_hours : null,
+        waiting_on:          form.waiting_on.trim()    || null,
+        waiting_contact_id:  form.waiting_on.trim() ? (form.waiting_contact_id || null) : null,
+        context_tag:         form.context_tag          || null,
+        checklist:           form.section_type === 'deliverable' && form.checklist.length
+                               ? form.checklist.filter(c => c.text.trim()) : null,
       };
       if (form.status) body.status = form.status;
       if (isEdit) {
@@ -1534,6 +1589,37 @@ function AddItemModal({ projectId, milestones, users, contacts, defaults = {}, e
             </div>
           )}
 
+          {/* Effort + context tag */}
+          {form.section_type !== 'context' && (
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+              <div>
+                <label style={labelStyle}>Effort</label>
+                <div style={{ display:'flex', gap:5, alignItems:'center' }}>
+                  {['S','M','L'].map(sz => iuBtn(sz, sz, form.effort_size === sz, () => {
+                    if (form.effort_size === sz) { set('effort_size', ''); return; }
+                    const prevDefault = String(EFFORT_DEFAULT_HOURS[form.effort_size] || '');
+                    const keepOverride = form.effort_hours !== '' && form.effort_hours !== prevDefault;
+                    setForm(f => ({ ...f, effort_size: sz, effort_hours: keepOverride ? f.effort_hours : String(EFFORT_DEFAULT_HOURS[sz]) }));
+                  }))}
+                  <input type="number" min="0" step="0.5" value={form.effort_hours}
+                    onChange={e => set('effort_hours', e.target.value)}
+                    placeholder="hrs" title="Estimated hours"
+                    style={{ ...inpStyle, width:64, height:30, padding:'0 8px', fontSize:12.5 }} />
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Context</label>
+                <select value={form.context_tag} onChange={e => set('context_tag', e.target.value)}
+                  style={{ ...inpStyle, cursor:'pointer' }}>
+                  <option value="">— None —</option>
+                  <option value="deep">Deep work</option>
+                  <option value="calls">Calls</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+            </div>
+          )}
+
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
             <div>
               <label style={labelStyle}>Assignee</label>
@@ -1571,6 +1657,55 @@ function AddItemModal({ projectId, milestones, users, contacts, defaults = {}, e
               </div>
             )}
           </div>
+
+          {/* Waiting on */}
+          {form.section_type !== 'context' && (
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+              <div>
+                <label style={labelStyle}>Waiting on</label>
+                <input value={form.waiting_on} onChange={e => set('waiting_on', e.target.value)}
+                  placeholder="e.g. client approval, vendor…" style={inpStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>Waiting on contact (optional)</label>
+                <select value={form.waiting_contact_id} onChange={e => set('waiting_contact_id', e.target.value)}
+                  disabled={!form.waiting_on.trim()}
+                  style={{ ...inpStyle, cursor:'pointer', opacity: form.waiting_on.trim() ? 1 : 0.5 }}>
+                  <option value="">— Not linked —</option>
+                  {(contacts||[]).map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` · ${c.company}` : ''}</option>)}
+                </select>
+              </div>
+            </div>
+          )}
+
+          {/* Definition-of-done checklist for deliverables */}
+          {form.section_type === 'deliverable' && (
+            <div>
+              <label style={labelStyle}>Definition of done</label>
+              <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                {form.checklist.map((c, idx) => (
+                  <div key={idx} style={{ display:'flex', alignItems:'center', gap:8 }}>
+                    <input type="checkbox" checked={!!c.done}
+                      onChange={e => set('checklist', form.checklist.map((x,i) => i===idx ? { ...x, done:e.target.checked } : x))}
+                      style={{ width:15, height:15, cursor:'pointer', flexShrink:0 }} />
+                    <input value={c.text}
+                      onChange={e => set('checklist', form.checklist.map((x,i) => i===idx ? { ...x, text:e.target.value } : x))}
+                      placeholder="Checklist step…"
+                      style={{ ...inpStyle, height:32, fontSize:13, textDecoration: c.done ? 'line-through' : 'none', color: c.done ? '#9A9AA4' : undefined }} />
+                    <button onClick={() => set('checklist', form.checklist.filter((_,i) => i!==idx))}
+                      style={{ color:'#B0B0BA', background:'none', border:'none', cursor:'pointer', padding:3, flexShrink:0 }}>
+                      <Icon name="x" size={14}/>
+                    </button>
+                  </div>
+                ))}
+                <button onClick={() => set('checklist', [...form.checklist, { text:'', done:false }])}
+                  style={{ alignSelf:'flex-start', height:28, padding:'0 10px', borderRadius:7, fontSize:12, fontWeight:600,
+                    border:'1.5px dashed #D1D1D8', background:'none', color:'#7A7A88', cursor:'pointer' }}>
+                  + Add step
+                </button>
+              </div>
+            </div>
+          )}
 
           {error && (
             <div style={{ background:'#FEF2F2', border:'1px solid #FECACA', borderRadius:8, padding:'9px 13px', color:'#DC2626', fontSize:13 }}>
@@ -1979,11 +2114,16 @@ function OverviewTab({ items, milestones }) {
   const doneA  = actionable.filter(it => ['done','delivered','approved'].includes(it.status)).length;
   const pct    = totalA > 0 ? Math.round(doneA / totalA * 100) : 0;
 
+  const openEffortHours = actionable
+    .filter(it => !['done','delivered','approved'].includes(it.status))
+    .reduce((sum, it) => sum + (+it.effort_hours || 0), 0);
+
   const kpis = [
     { label:'Open Tasks',   value: openTasks.length,     color: openTasks.length     ? '#2563EB' : '#16A34A', bg: openTasks.length     ? '#EFF4FF' : '#ECFDF3' },
     { label:'Overdue',      value: overdueItems.length,  color: overdueItems.length  ? '#DC2626' : '#16A34A', bg: overdueItems.length  ? '#FEF2F2' : '#ECFDF3' },
     { label:'Deliverables', value: pendingDelivs.length, color: pendingDelivs.length ? '#D97706' : '#16A34A', bg: pendingDelivs.length ? '#FEF6E7' : '#ECFDF3' },
     { label:'Follow-ups',   value: openFollowups.length, color: openFollowups.length ? '#7C3AED' : '#16A34A', bg: openFollowups.length ? '#F5F0FF' : '#ECFDF3' },
+    { label:'Open effort',  value: openEffortHours ? `${+openEffortHours.toFixed(1)}h` : '—', color:'#0891B2', bg:'#ECFEFF' },
   ];
 
   const delivStatusLabel = { draft:'Draft', review:'Review', approved:'Approved', delivered:'Delivered' };
@@ -2045,7 +2185,7 @@ function OverviewTab({ items, milestones }) {
       )}
 
       {/* KPI cards */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:10 }}>
+      <div style={{ display:'grid', gridTemplateColumns:`repeat(${kpis.length}, 1fr)`, gap:10 }}>
         {kpis.map(k => (
           <div key={k.label} style={{ background:'#fff', border:'1px solid #ECECEF', borderRadius:12, padding:'14px 16px', boxShadow:'0 1px 2px rgba(16,16,30,0.04)' }}>
             <div style={{ fontSize:24, fontWeight:800, color:k.color }}>{k.value}</div>
@@ -2116,6 +2256,9 @@ function TasksTab({ items, updateItem, deleteItem, openAddItem, openEditItem }) 
 
   const Row = ({ it }) => {
     const finished = isDone(it);
+    const [showChecklist, setShowChecklist] = useState(false);
+    const checklist = Array.isArray(it.checklist) ? it.checklist : [];
+    const checklistDone = checklist.filter(c => c.done).length;
     const delivSm  = it.section_type === 'deliverable'
       ? (DELIVERABLE_STATUSES.find(s => s.key === it.status) || DELIVERABLE_STATUSES[0])
       : null;
@@ -2134,7 +2277,7 @@ function TasksTab({ items, updateItem, deleteItem, openAddItem, openEditItem }) 
       });
       let marker = null;
       if (it.due_date) {
-        const due = new Date(it.due_date + 'T23:59:59');
+        const due = new Date(String(it.due_date).slice(0, 10) + 'T23:59:59');
         const diffDays = Math.round((completedDate - due) / 86400000);
         if (diffDays <= 0) {
           marker = <span style={{ fontSize:10.5, fontWeight:700, padding:'1px 6px', borderRadius:6, background:'#ECFDF3', color:'#16A34A', whiteSpace:'nowrap' }}>
@@ -2155,7 +2298,8 @@ function TasksTab({ items, updateItem, deleteItem, openAddItem, openEditItem }) 
     };
 
     return (
-      <div style={{ display:'flex', alignItems:'center', gap:10, padding:'11px 15px', borderBottom:'1px solid #F2F2F5', opacity:finished?0.55:1 }}>
+      <div style={{ borderBottom:'1px solid #F2F2F5' }}>
+      <div style={{ display:'flex', alignItems:'center', gap:10, padding:'11px 15px', opacity:finished?0.55:1 }}>
         {/* Left control */}
         {it.section_type === 'deliverable' ? (
           <button onClick={cycleDeliv}
@@ -2194,22 +2338,43 @@ function TasksTab({ items, updateItem, deleteItem, openAddItem, openEditItem }) 
         </div>
 
         {it.doc_type && <DocTypeBadge type={it.doc_type}/>}
+        {checklist.length > 0 && (
+          <button onClick={() => setShowChecklist(v => !v)}
+            title="Definition of done"
+            style={{ fontSize:11, fontWeight:700, padding:'3px 8px', borderRadius:6, whiteSpace:'nowrap', cursor:'pointer',
+              color: checklistDone === checklist.length ? '#16A34A' : '#6B6B76',
+              background: checklistDone === checklist.length ? '#ECFDF3' : '#F2F2F5', border:'none', flexShrink:0 }}>
+            ☑ {checklistDone}/{checklist.length}
+          </button>
+        )}
+        <ContextChip tag={it.context_tag}/>
+        <EffortBadge size={it.effort_size} hours={it.effort_hours}/>
         <IUBadge importance={it.importance} urgency={it.urgency}
           onChangeI={v => updateItem(it.id, { importance: v })}
           onChangeU={v => updateItem(it.id, { urgency: v })} />
         {it.assignee_name && <Avatar name={it.assignee_name} color={it.assignee_color} size={24}/>}
+        {!finished && <WaitingPill waitingOn={it.waiting_on} contactName={it.waiting_contact_name} since={it.waiting_since}/>}
         {!finished && it.due_date && <DuePill iso={it.due_date}/>}
-        <button onClick={() => updateItem(it.id, { committed: !it.committed })}
-          title={it.committed ? 'Committed this week (click to unmark)' : 'Commit to this week'}
-          style={{ color:it.committed?'#D97706':'#D1D1D8', background:'none', border:'none', cursor:'pointer', padding:'3px', flexShrink:0 }}>
-          <Icon name="bookmark" size={14}/>
-        </button>
         <button onClick={() => openEditItem(it)} style={{ color:'#B0B0BA', background:'none', border:'none', cursor:'pointer', padding:'3px' }} title="Edit">
           <Icon name="pencil" size={13}/>
         </button>
         <button onClick={() => deleteItem(it.id)} style={{ color:'#C4C4CC', background:'none', border:'none', cursor:'pointer', padding:'3px' }}>
           <Icon name="trash" size={14}/>
         </button>
+      </div>
+      {showChecklist && checklist.length > 0 && (
+        <div style={{ padding:'2px 15px 11px 47px', display:'flex', flexDirection:'column', gap:5 }}>
+          {checklist.map((c, idx) => (
+            <label key={idx} style={{ display:'flex', alignItems:'center', gap:8, fontSize:12.5, cursor:'pointer',
+              color: c.done ? '#9A9AA4' : '#3A3A44', textDecoration: c.done ? 'line-through' : 'none' }}>
+              <input type="checkbox" checked={!!c.done}
+                onChange={e => updateItem(it.id, { checklist: checklist.map((x,i) => i===idx ? { ...x, done:e.target.checked } : x) })}
+                style={{ width:14, height:14, cursor:'pointer' }} />
+              {c.text}
+            </label>
+          ))}
+        </div>
+      )}
       </div>
     );
   };
@@ -2946,7 +3111,9 @@ function ProjectsDashboard({ projects, onSelect }) {
   const activeProjects = projects.filter(p => p.status === 'active');
   const totalOpen      = activeProjects.reduce((a, p) => a + Number(p.item_count   || 0), 0);
   const totalOverdue   = activeProjects.reduce((a, p) => a + Number(p.overdue_count || 0), 0);
-  const lastPpc        = ppc[0]?.ppc ?? null;
+  const totalEffort    = activeProjects.reduce((a, p) => a + Number(p.open_effort_hours || 0), 0);
+  const lastFullWeek   = ppc.find(w => !w.is_current);
+  const lastPpc        = lastFullWeek?.ppc ?? null;
 
   if (loading) return (
     <div style={{ textAlign:'center', padding:'48px 0', color:'#9A9AA4', fontSize:14 }}>Loading dashboard…</div>
@@ -2988,8 +3155,9 @@ function ProjectsDashboard({ projects, onSelect }) {
   const milestones   = data?.milestones || [];
   const stalled      = data?.stalled || [];
   const triage       = data?.triage || [];
+  const waiting      = data?.waiting || [];
 
-  const allEmpty = overdueItems.length === 0 && milestones.length === 0 && stalled.length === 0 && triage.length === 0;
+  const allEmpty = overdueItems.length === 0 && milestones.length === 0 && stalled.length === 0 && triage.length === 0 && waiting.length === 0;
 
   return (
     <div>
@@ -2998,7 +3166,8 @@ function ProjectsDashboard({ projects, onSelect }) {
         <KPI label="Active projects"   value={activeProjects.length}/>
         <KPI label="Open items"        value={totalOpen}/>
         <KPI label="Overdue"           value={totalOverdue} accent={totalOverdue > 0 ? '#DC2626' : undefined}/>
-        <KPI label="PPC (last week)"   value={lastPpc !== null ? `${lastPpc}%` : '—'} sub="Commitment reliability"
+        <KPI label="Open effort"       value={totalEffort ? `${+totalEffort.toFixed(1)}h` : '—'} sub="Estimated hours"/>
+        <KPI label="Reliability (last week)" value={lastPpc !== null ? `${lastPpc}%` : '—'} sub="Done by due date"
           accent={lastPpc !== null ? (lastPpc >= 80 ? '#16A34A' : lastPpc >= 60 ? '#D97706' : '#DC2626') : undefined}/>
       </div>
 
@@ -3053,15 +3222,35 @@ function ProjectsDashboard({ projects, onSelect }) {
         </div>
       )}
 
+      {/* Waiting on others — chase list */}
+      {waiting.length > 0 && (
+        <div>
+          <SectionHeader title={`Waiting on others · ${waiting.length}`} color="#D97706"/>
+          <div style={{ fontSize:12, color:'#9A9AA4', marginBottom:8 }}>Items blocked on someone else — oldest first. Chase them.</div>
+          {waiting.map(it => (
+            <div key={it.id} onClick={() => onSelect(it.project_id)}
+              style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px', background:'#fff',
+                border:'1px solid #ECECEF', borderRadius:9, cursor:'pointer', marginBottom:5,
+                borderLeft:`4px solid ${it.project_color || ACCENT}` }}
+              onMouseEnter={e => e.currentTarget.style.background='#FAFAFB'}
+              onMouseLeave={e => e.currentTarget.style.background='#fff'}>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:10.5, fontWeight:700, color:'#9A9AA4', marginBottom:2 }}>{it.project_title}</div>
+                <div style={{ fontSize:13, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{it.title}</div>
+              </div>
+              <WaitingPill waitingOn={it.waiting_on} contactName={it.waiting_contact_name} since={it.waiting_since}/>
+              {it.due_date && <DuePill iso={it.due_date}/>}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Project health table */}
       {activeProjects.length > 0 && (
         <div style={{ marginTop:24 }}>
           <SectionHeader title="Project health"/>
           <div style={{ background:'#fff', border:'1px solid #ECECEF', borderRadius:12, overflow:'hidden' }}>
             {activeProjects.map((p, i) => {
-              const health = p.overdue_count > 0 ? 'At risk' : p.item_count === 0 ? 'Idle' : 'On track';
-              const healthColor = p.overdue_count > 0 ? '#DC2626' : p.item_count === 0 ? '#D97706' : '#16A34A';
-              const healthBg    = p.overdue_count > 0 ? '#FEF2F2' : p.item_count === 0 ? '#FFFBEB' : '#ECFDF3';
               return (
                 <div key={p.id} onClick={() => onSelect(p.id)}
                   style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 16px',
@@ -3077,7 +3266,7 @@ function ProjectsDashboard({ projects, onSelect }) {
                   {p.overdue_count > 0 && (
                     <div style={{ fontSize:11.5, color:'#DC2626', fontWeight:700, whiteSpace:'nowrap' }}>{p.overdue_count} overdue</div>
                   )}
-                  <span style={{ fontSize:11, fontWeight:700, padding:'2px 8px', borderRadius:6, color:healthColor, background:healthBg, whiteSpace:'nowrap' }}>{health}</span>
+                  <HealthBadge project={p}/>
                 </div>
               );
             })}
@@ -3098,6 +3287,64 @@ function ProjectsDashboard({ projects, onSelect }) {
           <div style={{ fontSize:13, marginTop:4 }}>No overdue items, no stalled deliverables, no triage needed.</div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── FocusQueue — computed "what matters today" list from /projects/focus ──────
+function FocusQueue({ onOpenProject }) {
+  const [data,    setData]    = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.get('/projects/focus')
+      .then(r => setData(r.data))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading || !data || !data.items.length) return null;
+
+  const groups = [
+    { key:'overdue', label:'Overdue',   color:'#DC2626' },
+    { key:'today',   label:'Today',     color:'#C2410C' },
+    { key:'week',    label:'This week', color:'#2563EB' },
+  ].map(g => ({ ...g, items: data.items.filter(it => it.due_bucket === g.key) }))
+   .filter(g => g.items.length > 0);
+
+  return (
+    <div style={{ marginTop:16, background:'#fff', border:'1px solid #ECECEF', borderRadius:14, padding:'16px 18px', boxShadow:'0 1px 2px rgba(16,16,30,0.04)' }}>
+      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14 }}>
+        <Icon name="task" size={15} color={ACCENT}/>
+        <span style={{ fontSize:14.5, fontWeight:700 }}>Today's focus</span>
+        <span style={{ fontSize:12, color:'#9A9AA4' }}>
+          {data.counts.overdue > 0 && <span style={{ color:'#DC2626', fontWeight:700 }}>{data.counts.overdue} overdue · </span>}
+          {data.counts.today} due today · {data.counts.week} this week
+        </span>
+      </div>
+      {groups.map(g => (
+        <div key={g.key} style={{ marginBottom:10 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:g.color, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6 }}>
+            {g.label} · {g.items.length}
+          </div>
+          {g.items.map(it => (
+            <div key={it.id} onClick={() => onOpenProject(it.project_id)}
+              style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 10px', borderRadius:9,
+                border:'1px solid #F0F0F3', marginBottom:4, cursor:'pointer',
+                borderLeft:`4px solid ${it.project_color || ACCENT}` }}
+              onMouseEnter={e => e.currentTarget.style.background='#FAFAFB'}
+              onMouseLeave={e => e.currentTarget.style.background=''}>
+              <div style={{ flex:1, minWidth:0 }}>
+                <span style={{ fontSize:10.5, fontWeight:700, color:'#9A9AA4', marginRight:8 }}>{it.project_title}</span>
+                <span style={{ fontSize:13, fontWeight:600 }}>{it.title}</span>
+              </div>
+              <ContextChip tag={it.context_tag}/>
+              <EffortBadge size={it.effort_size} hours={it.effort_hours}/>
+              <WaitingPill waitingOn={it.waiting_on} contactName={it.waiting_contact_name} since={it.waiting_since}/>
+              <DuePill iso={it.due_date}/>
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }
@@ -3420,22 +3667,11 @@ function ProjectsView({ projects, onSelect, onProjectsChange, currentUserId, isA
       return a.title.localeCompare(b.title);
     });
 
-  // Load today's items on mount (across all visible projects with overdue/today items)
+  // Load today's focus queue on mount — one call for overdue/today items across projects
   useEffect(() => {
-    const projectsWithDue = projects.filter(p => p.overdue_count > 0);
-    if (projectsWithDue.length === 0) { setTodayItems([]); setTodayLoaded(true); return; }
-    Promise.all(
-      projectsWithDue.map(p =>
-        api.get(`/projects/${p.id}/items`).then(r =>
-          r.data
-            .filter(it => it.due_date && diffDays(it.due_date) <= 0 && it.status !== 'done' && it.status !== 'delivered' && it.status !== 'approved')
-            .map(it => ({ ...it, project_title: p.title, project_id: p.id, project_color: p.color }))
-        )
-      )
-    ).then(results => {
-      setTodayItems(results.flat().sort((a,b) => new Date(a.due_date) - new Date(b.due_date)));
-      setTodayLoaded(true);
-    });
+    api.get('/projects/focus').then(r => {
+      setTodayItems((r.data.items || []).filter(it => it.due_bucket !== 'week'));
+    }).finally(() => setTodayLoaded(true));
   }, [projects]);
 
   const STATUS_META = {
@@ -3523,6 +3759,7 @@ function ProjectsView({ projects, onSelect, onProjectsChange, currentUserId, isA
                   <div style={{ display:'flex', alignItems:'center', gap:5, flexWrap:'wrap' }}>
                     <span style={{ fontSize:10.5, fontWeight:700, padding:'2px 6px', borderRadius:5,
                       color:sm.color, background:sm.bg }}>{sm.label}</span>
+                    <HealthBadge project={p}/>
                     <span style={{ fontSize:10.5, color:'#9A9AA4' }}>{p.item_count} open</span>
                     {p.overdue_count > 0 && (
                       <span style={{ fontSize:10.5, fontWeight:700, padding:'2px 6px', borderRadius:5,
@@ -3579,7 +3816,11 @@ function ProjectsView({ projects, onSelect, onProjectsChange, currentUserId, isA
                   <SectionTypeBadge type={it.section_type}/>
                 </div>
                 <div style={{ fontSize:12.5, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{it.title}</div>
-                <div style={{ marginTop:5 }}><DuePill iso={it.due_date}/></div>
+                <div style={{ marginTop:5, display:'flex', alignItems:'center', gap:5, flexWrap:'wrap' }}>
+                  <DuePill iso={it.due_date}/>
+                  <EffortBadge size={it.effort_size} hours={it.effort_hours}/>
+                  <WaitingPill waitingOn={it.waiting_on} contactName={it.waiting_contact_name} since={it.waiting_since}/>
+                </div>
               </div>
             ))}
           </div>
@@ -3660,6 +3901,7 @@ function ProjectsView({ projects, onSelect, onProjectsChange, currentUserId, isA
                   <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
                     <div style={{ fontSize:15, fontWeight:700, flex:1, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{p.title}</div>
                     <span style={{ fontSize:11, fontWeight:700, padding:'2px 7px', borderRadius:6, color:sm.color, background:sm.bg, whiteSpace:'nowrap' }}>{sm.label}</span>
+                    <HealthBadge project={p}/>
                     {p.overdue_count > 0 && (
                       <span style={{ fontSize:10.5, fontWeight:700, padding:'2px 7px', borderRadius:6, color:'#DC2626', background:'#FEF2F2', whiteSpace:'nowrap' }}>
                         {p.overdue_count} overdue
@@ -3911,6 +4153,7 @@ export default function CRM() {
   const [projects,        setProjects]        = useState([]);
   const [ppcData,           setPpcData]           = useState([]);
   const [projectFollowups,  setProjectFollowups]  = useState([]);
+  const [focusData,         setFocusData]         = useState(null);
   const [activeProjectId,    setActiveProjectId]    = useState(null);
   const [projectViewMode,    setProjectViewMode]    = useState(() => localStorage.getItem('crm_project_view') || 'grid');
   const setProjectView = (m) => { setProjectViewMode(m); localStorage.setItem('crm_project_view', m); };
@@ -3971,6 +4214,10 @@ export default function CRM() {
     api.get('/projects/followups-due').then(r => setProjectFollowups(r.data)).catch(() => {});
   }, []);
 
+  const loadFocus = useCallback(async () => {
+    api.get('/projects/focus').then(r => setFocusData(r.data)).catch(() => {});
+  }, []);
+
   useEffect(() => {
     loadContacts();
     loadDeals();
@@ -3979,6 +4226,7 @@ export default function CRM() {
     loadProjects();
     loadPpc();
     loadProjectFollowups();
+    loadFocus();
     if (isAdmin) loadUsers();
     else setUsers([{ id: user.id, name: user.name, color: user.color }]);
   }, [isAdmin, user.id, loadContacts, loadUsers]);
@@ -4018,6 +4266,8 @@ export default function CRM() {
   const overdueCount = contacts.filter(c => c.owner_id === user.id && c.next_followup && diffDays(c.next_followup) <= 0).length
     + projectFollowups.filter(pf => pf.due_date && diffDays(pf.due_date) <= 0).length;
   const openTaskCount = tasks.filter(t => !t.completed && (t.assigned_to === user.id || t.created_by === user.id)).length;
+  const focusDueCount = (focusData?.counts?.overdue || 0) + (focusData?.counts?.today || 0);
+  const focusDueItems = (focusData?.items || []).filter(it => it.due_bucket !== 'week');
 
   const isHRAdminUser   = user.role === 'admin' || user.hr_role === 'hr_admin';
   const isHRManagerUser = isHRAdminUser || user.hr_role === 'manager';
@@ -4263,9 +4513,9 @@ export default function CRM() {
             <button onClick={() => setShowNotifs(v => !v)}
               style={{ position:'relative', display:'flex', alignItems:'center', justifyContent:'center', width:38, height:38, borderRadius:9, background: showNotifs ? '#F0F0F7' : 'transparent', color:'#5A5A66' }}>
               <Icon name="bell" size={19} />
-              {(overdueCount + openTaskCount) > 0 && (
+              {(overdueCount + openTaskCount + focusDueCount) > 0 && (
                 <span style={{ position:'absolute', top:5, right:5, minWidth:16, height:16, borderRadius:8, background:'#DC2626', color:'#fff', fontSize:10, fontWeight:700, display:'flex', alignItems:'center', justifyContent:'center', padding:'0 3px', lineHeight:1 }}>
-                  {overdueCount + openTaskCount}
+                  {overdueCount + openTaskCount + focusDueCount}
                 </span>
               )}
             </button>
@@ -4280,7 +4530,7 @@ export default function CRM() {
                   </div>
 
                   <div style={{ maxHeight:340, overflowY:'auto' }}>
-                    {overdueCount === 0 && openTaskCount === 0 && (
+                    {overdueCount === 0 && openTaskCount === 0 && focusDueCount === 0 && (
                       <div style={{ padding:'28px 16px', textAlign:'center', color:'#9A9AA4', fontSize:13 }}>All caught up!</div>
                     )}
 
@@ -4341,6 +4591,32 @@ export default function CRM() {
                               </div>
                             </div>
                           ))}
+                      </>
+                    )}
+
+                    {focusDueCount > 0 && (
+                      <>
+                        <div style={{ padding:'10px 16px 4px', fontSize:10.5, fontWeight:700, letterSpacing:'0.04em', textTransform:'uppercase', color:'#EA580C' }}>
+                          Project items due · {focusDueCount}
+                        </div>
+                        {focusDueItems.slice(0, 5).map(it => (
+                          <div key={it.id}
+                            onClick={() => { setView('projects'); setActiveProjectId(it.project_id); setShowNotifs(false); }}
+                            style={{ display:'flex', alignItems:'center', gap:10, padding:'9px 16px', cursor:'pointer' }}
+                            onMouseEnter={e => e.currentTarget.style.background='#F6F6F9'}
+                            onMouseLeave={e => e.currentTarget.style.background='transparent'}
+                          >
+                            <div style={{ width:28, height:28, borderRadius:8, background:'#FFF1E9', display:'flex', alignItems:'center', justifyContent:'center', color:'#EA580C', flexShrink:0, borderLeft:`3px solid ${it.project_color || ACCENT}` }}>
+                              <Icon name="layers" size={14} />
+                            </div>
+                            <div style={{ flex:1, minWidth:0 }}>
+                              <div style={{ fontSize:13, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{it.title}</div>
+                              <div style={{ fontSize:11.5, color: it.due_bucket === 'overdue' ? '#DC2626' : '#C2410C', fontWeight:500 }}>
+                                {it.due_bucket === 'overdue' ? `${Math.abs(diffDays(it.due_date))}d overdue` : 'Due today'} · {it.project_title}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
                       </>
                     )}
                   </div>
@@ -4474,18 +4750,18 @@ export default function CRM() {
                 </div>
               </div>
 
-              {/* Commitment Reliability (PPC) */}
+              {/* Delivery Reliability (due date = commitment) */}
               {ppcData.length > 0 && (() => {
-                const thisWeek = ppcData[0];
+                const lastFull = ppcData.find(w => !w.is_current);
                 const ppcColor = (p) => p >= 70 ? '#16A34A' : p >= 40 ? '#D97706' : '#DC2626';
                 return (
                   <div style={{ marginTop:16, background:'#fff', border:'1px solid #ECECEF', borderRadius:14, padding:'16px 18px', boxShadow:'0 1px 2px rgba(16,16,30,0.04)' }}>
                     <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14 }}>
-                      <Icon name="bookmark" size={15} color={ACCENT}/>
-                      <span style={{ fontSize:14.5, fontWeight:700 }}>Commitment Reliability</span>
-                      {thisWeek?.ppc != null && (
-                        <span style={{ fontSize:22, fontWeight:800, fontFamily:"'IBM Plex Mono',monospace", color:ppcColor(thisWeek.ppc), marginLeft:'auto' }}>
-                          {thisWeek.ppc}%
+                      <Icon name="target" size={15} color={ACCENT}/>
+                      <span style={{ fontSize:14.5, fontWeight:700 }}>Delivery Reliability</span>
+                      {lastFull?.ppc != null && (
+                        <span style={{ fontSize:22, fontWeight:800, fontFamily:"'IBM Plex Mono',monospace", color:ppcColor(lastFull.ppc), marginLeft:'auto' }}>
+                          {lastFull.ppc}%
                         </span>
                       )}
                     </div>
@@ -4495,20 +4771,24 @@ export default function CRM() {
                         const weekLabel = new Date(w.week_start).toLocaleDateString('en', { month:'short', day:'numeric' });
                         return (
                           <div key={w.week_start} style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:4 }}>
-                            <div title={`${weekLabel}: ${w.ppc != null ? w.ppc+'%' : 'no data'} (${w.completed}/${w.total_committed})`}
+                            <div title={`${weekLabel}: ${w.ppc != null ? w.ppc+'%' : 'no data'} (${w.completed}/${w.total_committed})${w.is_current ? ' — in progress' : ''}`}
                               style={{ width:'100%', height:h, borderRadius:3, background: w.ppc != null ? ppcColor(w.ppc) : '#E5E5EA',
-                                opacity: i === ppcData.length - 1 ? 1 : 0.6 + (i / ppcData.length) * 0.4 }}/>
-                            <div style={{ fontSize:9, color:'#9A9AA4', whiteSpace:'nowrap' }}>{weekLabel}</div>
+                                opacity: w.is_current ? 0.45 : 0.6 + (i / ppcData.length) * 0.4,
+                                border: w.is_current ? '1px dashed #9A9AA4' : 'none', boxSizing:'border-box' }}/>
+                            <div style={{ fontSize:9, color:'#9A9AA4', whiteSpace:'nowrap' }}>{weekLabel}{w.is_current ? '*' : ''}</div>
                           </div>
                         );
                       })}
                     </div>
                     <div style={{ fontSize:11.5, color:'#9A9AA4', marginTop:8 }}>
-                      Planned percent complete — bookmark tasks/follow-ups to commit them to the current week.
+                      % of items due each week completed on or before their due date. A due date is a commitment. * = week in progress.
                     </div>
                   </div>
                 );
               })()}
+
+              {/* Today's focus queue */}
+              <FocusQueue onOpenProject={(id) => { setView('projects'); setActiveProjectId(id); }}/>
 
               {/* Projects at Risk + Active Projects strip */}
               {projects.filter(p => p.status === 'active').length > 0 && (() => {

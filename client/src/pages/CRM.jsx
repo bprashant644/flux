@@ -1943,7 +1943,7 @@ function TimelineTab({ projectId, milestones, items, loadMilestones, loadItems, 
 }
 
 // ── QuadrantTab ───────────────────────────────────────────────────────────────
-function QuadrantTab({ projectId, items, updateItem, deleteItem, openAddItem }) {
+function QuadrantTab({ projectId, items, updateItem, deleteItem, openAddItem, openEditItem }) {
   const [showDropConfirm, setShowDropConfirm] = useState(false);
 
   const quadrantable = items.filter(it => ['task','deliverable','followup'].includes(it.section_type)
@@ -1999,13 +1999,16 @@ function QuadrantTab({ projectId, items, updateItem, deleteItem, openAddItem }) 
           {cellItems.map(it => {
             const itDone = ['done','delivered','approved'].includes(it.status);
             return (
-            <div key={it.id} style={{ background:'#fff', borderRadius:8, padding:'8px 10px', border:'1px solid #EEEEF1',
-              opacity: isDrop ? 0.55 : 1 }}>
+            <div key={it.id} onClick={() => openEditItem(it)}
+              style={{ background:'#fff', borderRadius:8, padding:'8px 10px', border:'1px solid #EEEEF1',
+                opacity: isDrop ? 0.55 : 1, cursor:'pointer' }}
+              onMouseEnter={e => e.currentTarget.style.borderColor='#CCCCD8'}
+              onMouseLeave={e => e.currentTarget.style.borderColor='#EEEEF1'}>
               <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:4 }}>
                 <SectionTypeBadge type={it.section_type}/>
                 {it.due_date && !itDone && <DuePill iso={it.due_date}/>}
                 <div style={{ flex:1 }}/>
-                <button onClick={() => deleteItem(it.id)} style={{ color:'#D4D4DA', background:'none', border:'none', cursor:'pointer', padding:'2px', flexShrink:0 }}>
+                <button onClick={e => { e.stopPropagation(); deleteItem(it.id); }} style={{ color:'#D4D4DA', background:'none', border:'none', cursor:'pointer', padding:'2px', flexShrink:0 }}>
                   <Icon name="trash" size={12}/>
                 </button>
               </div>
@@ -2056,12 +2059,15 @@ function QuadrantTab({ projectId, items, updateItem, deleteItem, openAddItem }) 
           </div>
           <div style={{ display:'flex', gap:8, overflowX:'auto', paddingBottom:8 }}>
             {triage.map(it => (
-              <div key={it.id} style={{ minWidth:200, background:'#fff', borderRadius:10, padding:'10px 12px',
-                border:'1px solid #EEEEF1', flexShrink:0 }}>
+              <div key={it.id} onClick={() => openEditItem(it)}
+                style={{ minWidth:200, background:'#fff', borderRadius:10, padding:'10px 12px',
+                  border:'1px solid #EEEEF1', flexShrink:0, cursor:'pointer' }}
+                onMouseEnter={e => e.currentTarget.style.borderColor='#CCCCD8'}
+                onMouseLeave={e => e.currentTarget.style.borderColor='#EEEEF1'}>
                 <SectionTypeBadge type={it.section_type}/>
                 <div style={{ fontSize:12.5, fontWeight:600, marginTop:5, marginBottom:8,
                   whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{it.title}</div>
-                <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+                <div style={{ display:'flex', gap:6, alignItems:'center' }} onClick={e => e.stopPropagation()}>
                   <IUBadge
                     importance={it.importance} urgency={it.urgency}
                     onChangeI={v => updateItem(it.id, { importance: v })}
@@ -2096,7 +2102,7 @@ function QuadrantTab({ projectId, items, updateItem, deleteItem, openAddItem }) 
 }
 
 // ── Project OverviewTab ───────────────────────────────────────────────────────
-function OverviewTab({ items, milestones }) {
+function OverviewTab({ items, milestones, openEditItem }) {
   const actionable = items.filter(it => ['task','deliverable','followup'].includes(it.section_type));
   const openTasks      = items.filter(it => it.section_type === 'task'        && it.status === 'open');
   const openFollowups  = items.filter(it => it.section_type === 'followup'    && it.status === 'open');
@@ -2131,7 +2137,11 @@ function OverviewTab({ items, milestones }) {
   const delivStatusBg    = { draft:'#F1F5F9', review:'#FEF6E7', approved:'#EFF4FF', delivered:'#ECFDF3' };
 
   const ItemRow = ({ item }) => (
-    <div style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', borderBottom:'1px solid #F2F2F5' }}>
+    <div onClick={() => openEditItem?.(item)}
+      style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', borderBottom:'1px solid #F2F2F5',
+        cursor: openEditItem ? 'pointer' : 'default' }}
+      onMouseEnter={e => e.currentTarget.style.background='#FAFAFB'}
+      onMouseLeave={e => e.currentTarget.style.background=''}>
       <div style={{ flex:1, minWidth:0 }}>
         <div style={{ fontSize:13, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{item.title}</div>
         {item.assignee_name && <div style={{ fontSize:11.5, color:'#9A9AA4', marginTop:1 }}>→ {item.assignee_name}</div>}
@@ -2210,7 +2220,11 @@ function OverviewTab({ items, milestones }) {
           </div>
           <div style={{ background:'#fff', border:'1px solid #ECECEF', borderRadius:12, overflow:'hidden', boxShadow:'0 1px 2px rgba(16,16,30,0.04)' }}>
             {[...openFollowups].sort((a,b) => (a.due_date||'z') < (b.due_date||'z') ? -1 : 1).map(it => (
-              <div key={it.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', borderBottom:'1px solid #F2F2F5' }}>
+              <div key={it.id} onClick={() => openEditItem?.(it)}
+                style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', borderBottom:'1px solid #F2F2F5',
+                  cursor: openEditItem ? 'pointer' : 'default' }}
+                onMouseEnter={e => e.currentTarget.style.background='#FAFAFB'}
+                onMouseLeave={e => e.currentTarget.style.background=''}>
                 <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ fontSize:13, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{it.title}</div>
                   {(it.followup_contact_name || it.assignee_name) && (
@@ -2709,12 +2723,12 @@ function ProjectDetail({ projectId, onBack, currentUserId, isAdmin, users, conta
           <TimelineTab projectId={projectId} milestones={milestones} items={items}
             loadMilestones={loadMilestones} loadItems={loadItems} users={users}/>
           <div style={{ marginTop:26 }}>
-            <OverviewTab items={items} milestones={milestones}/>
+            <OverviewTab items={items} milestones={milestones} openEditItem={openEditItem}/>
           </div>
         </div>
       )}
       {activeTab === 'quadrant' && (
-        <QuadrantTab projectId={projectId} items={items} updateItem={updateItem} deleteItem={deleteItem} openAddItem={openAddItem}/>
+        <QuadrantTab projectId={projectId} items={items} updateItem={updateItem} deleteItem={deleteItem} openAddItem={openAddItem} openEditItem={openEditItem}/>
       )}
       {activeTab === 'tasks' && (
         <TasksTab items={items} updateItem={updateItem} deleteItem={deleteItem} openAddItem={openAddItem} openEditItem={openEditItem}/>

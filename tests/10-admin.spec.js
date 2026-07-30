@@ -56,7 +56,9 @@ test.describe('Admin — Team & Users', () => {
 
     await page.getByPlaceholder('Jane Cooper').first().fill(`PW Rep ${TS}`);
     await page.locator('input[type="email"]').last().fill(`pw.rep.${TS}@relay-crm.test`);
-    await page.locator('input[type="password"]').last().fill('TestPass123!');
+    const pwInputs = page.locator('input[type="password"]');
+    await pwInputs.nth(0).fill('TestPass123!');
+    await pwInputs.nth(1).fill('TestPass123!');
 
     // Role defaults to rep — leave it
     await page.getByRole('button', { name: /save|add/i }).last().click();

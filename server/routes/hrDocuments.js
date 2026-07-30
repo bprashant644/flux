@@ -34,6 +34,7 @@ router.get('/', verify, async (req, res) => {
       SELECT d.*,
              u2.name AS created_by_name,
              ep.name AS assigned_to_name,
+             ep.color AS assigned_to_color,
              (SELECT COUNT(*)::int FROM hr_document_acks a WHERE a.document_id=d.id) AS ack_count,
              EXISTS(SELECT 1 FROM hr_document_acks a WHERE a.document_id=d.id AND a.user_id=$1) AS acknowledged,
              (SELECT acknowledged_at FROM hr_document_acks a WHERE a.document_id=d.id AND a.user_id=$1) AS acknowledged_at

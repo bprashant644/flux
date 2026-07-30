@@ -11,6 +11,10 @@ const app = express();
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 
+// Publicly served avatar photos (low-sensitivity images, unlike gated HR document downloads).
+// Mounted under /api so the Vite dev-server proxy (which only forwards /api/*) reaches it too.
+app.use('/api/uploads/avatars', express.static(path.join(__dirname, 'uploads/avatars')));
+
 // API routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/users', require('./routes/users'));
@@ -27,6 +31,7 @@ app.use('/api/projects/:projectId/milestones', require('./routes/projectMileston
 app.use('/api/projects/:projectId/items',      require('./routes/projectItems'));
 app.use('/api/hr/employees',  require('./routes/hrEmployees'));
 app.use('/api/hr/leaves',     require('./routes/hrLeaves'));
+app.use('/api/hr/holidays',   require('./routes/hrHolidays'));
 app.use('/api/hr/attendance', require('./routes/hrAttendance'));
 app.use('/api/hr/documents',  require('./routes/hrDocuments'));
 app.use('/api/hr/payroll',    require('./routes/hrPayroll'));

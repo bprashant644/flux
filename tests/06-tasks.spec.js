@@ -4,7 +4,7 @@ const { login, nav } = require('./helpers');
 test.describe('Tasks', () => {
   test.beforeEach(async ({ page }) => {
     await login(page);
-    await nav(page, 'Tasks');
+    await nav(page, 'My Tasks');
   });
 
   test('tasks view renders without error', async ({ page }) => {

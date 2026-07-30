@@ -109,28 +109,34 @@ router.put('/:id/profile', verify, async (req, res) => {
     manager_id, hr_role,
   } = req.body;
   try {
-    const epFields = [], epVals = [];
-    let i = 1;
-    if (phone !== undefined)                   { epFields.push(`phone=$${i++}`);                   epVals.push(phone || null); }
-    if (address !== undefined)                 { epFields.push(`address=$${i++}`);                 epVals.push(address || null); }
-    if (emergency_contact_name !== undefined)  { epFields.push(`emergency_contact_name=$${i++}`);  epVals.push(emergency_contact_name || null); }
-    if (emergency_contact_phone !== undefined) { epFields.push(`emergency_contact_phone=$${i++}`); epVals.push(emergency_contact_phone || null); }
+    const epCols = [], epVals = [];
+    const pushEp = (col, val) => { epCols.push(col); epVals.push(val); };
+    if (phone !== undefined)                   pushEp('phone', phone || null);
+    if (address !== undefined)                 pushEp('address', address || null);
+    if (emergency_contact_name !== undefined)  pushEp('emergency_contact_name', emergency_contact_name || null);
+    if (emergency_contact_phone !== undefined) pushEp('emergency_contact_phone', emergency_contact_phone || null);
     if (isHRAdmin(u)) {
-      if (employee_id !== undefined)          { epFields.push(`employee_id=$${i++}`);          epVals.push(employee_id || null); }
-      if (department !== undefined)           { epFields.push(`department=$${i++}`);           epVals.push(department || null); }
-      if (designation !== undefined)          { epFields.push(`designation=$${i++}`);          epVals.push(designation || null); }
-      if (joining_date !== undefined)         { epFields.push(`joining_date=$${i++}`);         epVals.push(joining_date || null); }
-      if (date_of_birth !== undefined)        { epFields.push(`date_of_birth=$${i++}`);        epVals.push(date_of_birth || null); }
-      if (pan_number !== undefined)           { epFields.push(`pan_number=$${i++}`);           epVals.push(pan_number || null); }
-      if (bank_account_number !== undefined)  { epFields.push(`bank_account_number=$${i++}`);  epVals.push(bank_account_number || null); }
-      if (bank_ifsc !== undefined)            { epFields.push(`bank_ifsc=$${i++}`);            epVals.push(bank_ifsc || null); }
+      if (employee_id !== undefined)          pushEp('employee_id', employee_id || null);
+      if (department !== undefined)           pushEp('department', department || null);
+      if (designation !== undefined)          pushEp('designation', designation || null);
+      if (joining_date !== undefined)         pushEp('joining_date', joining_date || null);
+      if (date_of_birth !== undefined)        pushEp('date_of_birth', date_of_birth || null);
+      if (pan_number !== undefined)           pushEp('pan_number', pan_number || null);
+      if (bank_account_number !== undefined)  pushEp('bank_account_number', bank_account_number || null);
+      if (bank_ifsc !== undefined)            pushEp('bank_ifsc', bank_ifsc || null);
     }
-    if (epFields.length) {
-      epFields.push(`updated_at=NOW()`);
+    if (epCols.length) {
+      // Include every field in both the INSERT column/value list and the ON CONFLICT UPDATE SET —
+      // listing them only in the UPDATE clause silently drops them on a user's very first save,
+      // since INSERT only populates columns present in its own VALUES list.
       epVals.push(tid);
+      const userIdParam = `$${epVals.length}`;
+      const valuePlaceholders = epCols.map((_, idx) => `$${idx + 1}`);
+      const updateSet = epCols.map((c, idx) => `${c}=$${idx + 1}`).join(',');
       await pool.query(
-        `INSERT INTO employee_profiles (user_id) VALUES ($${epVals.length})
-         ON CONFLICT (user_id) DO UPDATE SET ${epFields.join(',')}`,
+        `INSERT INTO employee_profiles (user_id, ${epCols.join(',')})
+         VALUES (${userIdParam}, ${valuePlaceholders.join(',')})
+         ON CONFLICT (user_id) DO UPDATE SET ${updateSet}, updated_at=NOW()`,
         epVals
       );
     }

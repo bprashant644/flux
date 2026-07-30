@@ -3,6 +3,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api';
 import HRModule from './HR';
+import { isValidPassword, PASSWORD_RULE_MESSAGE } from '../utils/password';
+import GroupedByEmployee from '../components/GroupedByEmployee';
 
 // ── Icons ──────────────────────────────────────────────────────────────────
 const PATHS = {
@@ -35,6 +37,7 @@ const PATHS = {
   bookmark: ['M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z'],
   rotate:   ['M23 4v6h-6','M1 20v-6h6','M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'],
   sidebar:  ['M3 3h18v18H3z','M9 3v18'],
+  calendar: ['M3 4h18v18H3z','M16 2v4','M8 2v4','M3 10h18'],
 };
 
 function Icon({ name, size = 18, color }) {
@@ -191,7 +194,12 @@ function StagePill({ stage }) {
   const m = stageByKey(stage);
   return <span style={{ display:'inline-flex', fontSize:11.5, fontWeight:700, padding:'3px 9px', borderRadius:7, whiteSpace:'nowrap', color:m.color, background:m.bg }}>{m.label}</span>;
 }
-function Avatar({ name, color, size = 28 }) {
+function Avatar({ name, color, size = 28, photoUrl }) {
+  if (photoUrl) {
+    return (
+      <img src={photoUrl} alt={name || ''} style={{ width:size, height:size, flexShrink:0, borderRadius:'50%', objectFit:'cover' }} />
+    );
+  }
   return (
     <div style={{ width:size, height:size, flexShrink:0, borderRadius:'50%', background:color||'#5B5BD6', color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', fontSize: size * 0.38, fontWeight:700 }}>
       {initials(name)}
@@ -265,6 +273,9 @@ const QUADRANT_META = [
   { imp:0, urg:1, label:'Delegate',  sub:'Not Important · Urgent',  color:'#D97706', bg:'#FEF6E7', lightBg:'#FFFBF4' },
   { imp:0, urg:0, label:'Drop',      sub:'Not Important · Not Urgent',color:'#94A3B8',bg:'#F1F5F9',lightBg:'#F8FAFC' },
 ];
+// Importance/urgency are stored as 0=Low, 1=Medium, 2=High so triage can capture more nuance,
+// but the Eisenhower grid itself stays a forced binary — Medium buckets with High on either axis.
+const iuBucket = v => (v === null || v === undefined) ? null : (v === 0 ? 0 : 1);
 
 function SectionTypeBadge({ type }) {
   const m = SECTION_TYPE_META[type] || SECTION_TYPE_META.task;
@@ -284,27 +295,40 @@ function DocTypeBadge({ type }) {
     </span>
   );
 }
+const IU_LEVEL_LABEL = { 0:'Low', 1:'Medium', 2:'High' };
 function IUBadge({ importance, urgency, onChangeI, onChangeU }) {
-  const iLabel = importance === 1 ? 'HI' : importance === 0 ? 'LI' : '?I';
-  const uLabel = urgency    === 1 ? 'HU' : urgency    === 0 ? 'LU' : '?U';
-  const iColor = importance === 1 ? '#DC2626' : importance === 0 ? '#64748B' : '#C4C4CC';
-  const uColor = urgency    === 1 ? '#D97706' : urgency    === 0 ? '#64748B' : '#C4C4CC';
-  const cycle = v => v === null ? 1 : v === 1 ? 0 : null;
+  const iLabel = importance === 2 ? 'HI' : importance === 1 ? 'MI' : importance === 0 ? 'LI' : '?I';
+  const uLabel = urgency    === 2 ? 'HU' : urgency    === 1 ? 'MU' : urgency    === 0 ? 'LU' : '?U';
+  const iColor = importance === 2 ? '#DC2626' : importance === 1 ? '#D97706' : importance === 0 ? '#64748B' : '#C4C4CC';
+  const uColor = urgency    === 2 ? '#D97706' : urgency    === 1 ? '#D97706' : urgency    === 0 ? '#64748B' : '#C4C4CC';
+  const cycle = v => v === null ? 2 : v === 2 ? 1 : v === 1 ? 0 : null;
   return (
     <div style={{ display:'flex', gap:3 }}>
       <button onClick={e => { e.stopPropagation(); onChangeI && onChangeI(cycle(importance)); }}
-        title={`Importance: ${importance === 1 ? 'High' : importance === 0 ? 'Low' : 'Unset'}`}
+        title={`Importance: ${IU_LEVEL_LABEL[importance] ?? 'Unset'}`}
         style={{ fontSize:10, fontWeight:700, padding:'2px 5px', borderRadius:4,
           color:iColor, background:'#F2F2F5', border:'none', cursor:onChangeI?'pointer':'default' }}>
         {iLabel}
       </button>
       <button onClick={e => { e.stopPropagation(); onChangeU && onChangeU(cycle(urgency)); }}
-        title={`Urgency: ${urgency === 1 ? 'High' : urgency === 0 ? 'Low' : 'Unset'}`}
+        title={`Urgency: ${IU_LEVEL_LABEL[urgency] ?? 'Unset'}`}
         style={{ fontSize:10, fontWeight:700, padding:'2px 5px', borderRadius:4,
           color:uColor, background:'#F2F2F5', border:'none', cursor:onChangeU?'pointer':'default' }}>
         {uLabel}
       </button>
     </div>
+  );
+}
+// Flags when either axis is Medium — the quadrant itself only shows the High/Low bucket,
+// so this is the one place that surfaces the finer-grained tier within a cell.
+function MedFlag({ importance, urgency }) {
+  const parts = [importance === 1 && 'Importance: Medium', urgency === 1 && 'Urgency: Medium'].filter(Boolean);
+  if (!parts.length) return null;
+  return (
+    <span title={parts.join(' · ')}
+      style={{ fontSize:9.5, fontWeight:700, padding:'1px 5px', borderRadius:5, background:'#FEF6E7', color:'#D97706', whiteSpace:'nowrap' }}>
+      MED
+    </span>
   );
 }
 
@@ -324,6 +348,7 @@ function DetailPanel({ contact, onClose, onUpdate, onDealsChange, onDelete, curr
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [dealForm, setDealForm]     = useState({ title:'', value:'', stage:'prospect', expected_close:'' });
   const [taskForm, setTaskForm]     = useState({ title:'', due_date:'', assigned_to: currentUserId });
+  const [selectedTask, setSelectedTask] = useState(null);
   const cf = contact.custom_fields || {};
   const [editForm, setEditForm]     = useState({
     name:     contact.name     || '',
@@ -825,8 +850,9 @@ function DetailPanel({ contact, onClose, onUpdate, onDealsChange, onDelete, curr
             {tasks.length === 0 ? (
               <div style={{ fontSize:13, color:'#B0B0BA', fontStyle:'italic' }}>No tasks yet.</div>
             ) : tasks.map(t => (
-              <div key={t.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'9px 11px', background: t.completed?'#F8F8FB':'#FAFAFB', border:'1px solid #EEEEF1', borderRadius:10, marginBottom:6, opacity: t.completed?0.6:1 }}>
-                <button onClick={() => toggleTask(t)}
+              <div key={t.id} onClick={() => setSelectedTask(t)}
+                style={{ display:'flex', alignItems:'center', gap:10, padding:'9px 11px', background: t.completed?'#F8F8FB':'#FAFAFB', border:'1px solid #EEEEF1', borderRadius:10, marginBottom:6, opacity: t.completed?0.6:1, cursor:'pointer' }}>
+                <button onClick={(e) => { e.stopPropagation(); toggleTask(t); }}
                   style={{ width:20, height:20, borderRadius:5, border:'2px solid', borderColor: t.completed?'#16A34A':'#D1D1D8', background: t.completed?'#16A34A':'transparent', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer' }}>
                   {t.completed && <Icon name="check" size={11} color="#fff" />}
                 </button>
@@ -839,7 +865,7 @@ function DetailPanel({ contact, onClose, onUpdate, onDealsChange, onDelete, curr
                     </div>
                   )}
                 </div>
-                {canEdit && <button onClick={() => deleteTask(t.id)} style={{ color:'#C4C4CC', background:'none', border:'none', cursor:'pointer', padding:0 }}><Icon name="x" size={14}/></button>}
+                {canEdit && <button onClick={(e) => { e.stopPropagation(); deleteTask(t.id); }} style={{ color:'#C4C4CC', background:'none', border:'none', cursor:'pointer', padding:0 }}><Icon name="x" size={14}/></button>}
               </div>
             ))}
           </div>
@@ -908,6 +934,17 @@ function DetailPanel({ contact, onClose, onUpdate, onDealsChange, onDelete, curr
           </div>
         </div>
       </div>
+
+      {selectedTask && (
+        <TaskDetailModal
+          task={selectedTask}
+          currentUserId={currentUserId}
+          isAdmin={isAdmin}
+          users={users}
+          onClose={() => setSelectedTask(null)}
+          onSaved={() => { reloadTasks(); setSelectedTask(null); }}
+        />
+      )}
     </div>
   );
 }
@@ -1098,9 +1135,7 @@ function CurrencySettingsCard({ card, inpStyle }) {
   const OTHER_CURRENCIES = Object.keys(CURRENCIES).filter(c => c !== 'INR');
 
   return (
-    <div style={{ marginTop:28 }}>
-      <h2 style={{ fontSize:20, fontWeight:800, letterSpacing:'-0.02em', marginBottom:20 }}>Currency & Display</h2>
-
+    <div>
       <div style={card}>
         <div style={{ fontSize:15, fontWeight:700, marginBottom:4 }}>Display currency</div>
         <div style={{ fontSize:13, color:'#7E7E88', marginBottom:14 }}>
@@ -1153,55 +1188,235 @@ function CurrencySettingsCard({ card, inpStyle }) {
 // ── Settings Page ────────────────────────────────────────────────────────────
 const PROFILE_COLORS = ['#5B5BD6','#2563EB','#16A34A','#D97706','#DC2626','#7C3AED','#0891B2','#DB2777','#65A30D','#EA580C'];
 
-function SettingsPage({ user, onUpdate, isAdmin, customFieldDefs, reloadCustomFields }) {
-  const [profileForm, setProfileForm] = useState({ name: user.name, email: user.email || '', newPassword: '', confirmPassword: '', color: user.color });
-  const [profileSaving, setProfileSaving] = useState(false);
-  const [profileError, setProfileError] = useState('');
-  const [profileSuccess, setProfileSuccess] = useState(false);
+const SETTINGS_CARD = { background:'#fff', border:'1px solid #ECECEF', borderRadius:14, padding:'20px 22px', marginBottom:16, boxShadow:'0 1px 2px rgba(16,16,30,0.04)' };
+const SETTINGS_INPUT = { width:'100%', height:40, padding:'0 12px', border:'1px solid #E5E5EA', borderRadius:9, fontSize:13.5, background:'#FAFAFB', outline:'none' };
+const SETTINGS_LABEL = { display:'block', fontSize:12, fontWeight:600, color:'#6B6B76', textTransform:'uppercase', letterSpacing:'0.04em', marginBottom:5 };
 
-  const setP = (k, v) => setProfileForm(f => ({ ...f, [k]: v }));
+function ProfileTab({ user, onUpdate, isHRAdminUser }) {
+  const [emp, setEmp] = useState(null);
+  const [form, setForm] = useState({ name: user.name, email: user.email || '', color: user.color });
+  const [empForm, setEmpForm] = useState({
+    phone:'', address:'', emergency_contact_name:'', emergency_contact_phone:'',
+    employee_id:'', department:'', designation:'', joining_date:'', date_of_birth:'',
+    pan_number:'', bank_account_number:'', bank_ifsc:'',
+  });
+  const [showSensitive, setShowSensitive] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const fileInputRef = React.useRef(null);
 
-  const saveProfile = async () => {
-    if (!profileForm.name.trim()) { setProfileError('Name is required'); return; }
-    if (profileForm.newPassword && profileForm.newPassword.length < 8) { setProfileError('Password must be at least 8 characters'); return; }
-    if (profileForm.newPassword !== profileForm.confirmPassword) { setProfileError('Passwords do not match'); return; }
-    setProfileSaving(true); setProfileError(''); setProfileSuccess(false);
+  const load = useCallback(async () => {
     try {
-      const body = { name: profileForm.name.trim(), email: profileForm.email.trim(), color: profileForm.color };
-      if (profileForm.newPassword) body.password = profileForm.newPassword;
-      await api.put(`/users/${user.id}`, body);
+      const r = await api.get(`/hr/employees/${user.id}`);
+      setEmp(r.data);
+      setEmpForm({
+        phone: r.data.phone || '', address: r.data.address || '',
+        emergency_contact_name: r.data.emergency_contact_name || '', emergency_contact_phone: r.data.emergency_contact_phone || '',
+        employee_id: r.data.employee_id || '', department: r.data.department || '', designation: r.data.designation || '',
+        joining_date: r.data.joining_date?.slice(0,10) || '', date_of_birth: r.data.date_of_birth?.slice(0,10) || '',
+        pan_number: r.data.pan_number || '', bank_account_number: r.data.bank_account_number || '', bank_ifsc: r.data.bank_ifsc || '',
+      });
+    } catch { /* no employee record yet — form stays blank */ }
+  }, [user.id]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const setF = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const setE = (k, v) => setEmpForm(f => ({ ...f, [k]: v }));
+
+  const uploadPhoto = async (file) => {
+    if (!file) return;
+    setUploadingPhoto(true);
+    try {
+      const fd = new FormData();
+      fd.append('photo', file);
+      await api.post(`/users/${user.id}/photo`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
       await onUpdate();
-      setProfileForm(f => ({ ...f, newPassword: '', confirmPassword: '' }));
-      setProfileSuccess(true);
-      setTimeout(() => setProfileSuccess(false), 3000);
+    } finally { setUploadingPhoto(false); }
+  };
+
+  const removePhoto = async () => {
+    setUploadingPhoto(true);
+    try { await api.delete(`/users/${user.id}/photo`); await onUpdate(); }
+    finally { setUploadingPhoto(false); }
+  };
+
+  const save = async () => {
+    if (!form.name.trim()) { setError('Name is required'); return; }
+    setSaving(true); setError(''); setSuccess(false);
+    try {
+      await api.put(`/users/${user.id}`, { name: form.name.trim(), email: form.email.trim(), color: form.color });
+      const empBody = {
+        phone: empForm.phone, address: empForm.address,
+        emergency_contact_name: empForm.emergency_contact_name, emergency_contact_phone: empForm.emergency_contact_phone,
+      };
+      if (isHRAdminUser) {
+        Object.assign(empBody, {
+          employee_id: empForm.employee_id, department: empForm.department, designation: empForm.designation,
+          joining_date: empForm.joining_date || null, date_of_birth: empForm.date_of_birth || null,
+          pan_number: empForm.pan_number, bank_account_number: empForm.bank_account_number, bank_ifsc: empForm.bank_ifsc,
+        });
+      }
+      await api.put(`/hr/employees/${user.id}/profile`, empBody);
+      await onUpdate();
+      await load();
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
-      setProfileError(err.response?.data?.error || 'Failed to save');
+      setError(err.response?.data?.error || 'Failed to save');
     } finally {
-      setProfileSaving(false);
+      setSaving(false);
     }
   };
 
+  const viewField = (label, value) => (
+    <div>
+      <label style={SETTINGS_LABEL}>{label}</label>
+      <div style={{ fontSize:13.5, color: value ? '#1A1A24' : '#C4C4CC', fontStyle: value ? 'normal' : 'italic' }}>{value || '—'}</div>
+    </div>
+  );
+
+  return (
+    <>
+      <div style={SETTINGS_CARD}>
+        <div style={{ display:'flex', alignItems:'center', gap:16, marginBottom:20 }}>
+          <Avatar name={user.name} color={form.color} photoUrl={user.photo_url} size={64} />
+          <div>
+            <input ref={fileInputRef} type="file" accept="image/*" style={{ display:'none' }}
+              onChange={e => uploadPhoto(e.target.files?.[0])} />
+            <div style={{ display:'flex', gap:8 }}>
+              <button onClick={() => fileInputRef.current?.click()} disabled={uploadingPhoto}
+                style={{ height:32, padding:'0 12px', borderRadius:8, background:'#F2F2F5', color:'#3A3A44', fontSize:12.5, fontWeight:600, border:'none', cursor:'pointer' }}>
+                {uploadingPhoto ? 'Uploading…' : 'Upload photo'}
+              </button>
+              {user.photo_url && (
+                <button onClick={removePhoto} disabled={uploadingPhoto}
+                  style={{ height:32, padding:'0 12px', borderRadius:8, background:'#FEF2F2', color:'#DC2626', fontSize:12.5, fontWeight:600, border:'none', cursor:'pointer' }}>
+                  Remove
+                </button>
+              )}
+            </div>
+            <div style={{ fontSize:11.5, color:'#9A9AA4', marginTop:6 }}>JPG or PNG, up to 5MB.</div>
+          </div>
+        </div>
+
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, marginBottom:14 }}>
+          <div>
+            <label style={SETTINGS_LABEL}>Full name</label>
+            <input value={form.name} onChange={e => setF('name', e.target.value)} placeholder="Your name" style={SETTINGS_INPUT} />
+          </div>
+          <div>
+            <label style={SETTINGS_LABEL}>Email</label>
+            <input type="email" value={form.email} onChange={e => setF('email', e.target.value)} placeholder="you@company.com" style={SETTINGS_INPUT} />
+          </div>
+        </div>
+
+        <div style={{ marginBottom:4 }}>
+          <label style={SETTINGS_LABEL}>Avatar colour</label>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+            {PROFILE_COLORS.map(c => (
+              <button key={c} onClick={() => setF('color', c)}
+                style={{ width:28, height:28, borderRadius:'50%', background:c, border: form.color === c ? '3px solid #19191F' : '3px solid transparent', cursor:'pointer', transition:'border .1s' }} />
+            ))}
+            <div style={{ position:'relative', width:28, height:28, borderRadius:'50%', background:form.color, border:'2px solid #E5E5EA', overflow:'hidden' }}>
+              <input type="color" value={form.color} onChange={e => setF('color', e.target.value)}
+                style={{ position:'absolute', inset:-4, width:'calc(100% + 8px)', height:'calc(100% + 8px)', cursor:'pointer', border:'none', padding:0, opacity:0 }} />
+            </div>
+          </div>
+          <div style={{ fontSize:11, color:'#B0B0BC', marginTop:6 }}>Used when no photo is set.</div>
+        </div>
+      </div>
+
+      <div style={SETTINGS_CARD}>
+        <div style={{ fontSize:13, fontWeight:700, color:'#5A5A66', textTransform:'uppercase', letterSpacing:'.05em', marginBottom:14 }}>Contact Details</div>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
+          <div>
+            <label style={SETTINGS_LABEL}>Phone</label>
+            <input value={empForm.phone} onChange={e => setE('phone', e.target.value)} style={SETTINGS_INPUT} />
+          </div>
+          <div>
+            <label style={SETTINGS_LABEL}>Emergency Contact</label>
+            <input value={empForm.emergency_contact_name} onChange={e => setE('emergency_contact_name', e.target.value)} style={SETTINGS_INPUT} />
+          </div>
+          <div>
+            <label style={SETTINGS_LABEL}>Emergency Phone</label>
+            <input value={empForm.emergency_contact_phone} onChange={e => setE('emergency_contact_phone', e.target.value)} style={SETTINGS_INPUT} />
+          </div>
+        </div>
+        <div style={{ marginTop:14 }}>
+          <label style={SETTINGS_LABEL}>Address</label>
+          <textarea value={empForm.address} onChange={e => setE('address', e.target.value)}
+            style={{ ...SETTINGS_INPUT, height:70, padding:'8px 10px', resize:'vertical' }} />
+        </div>
+      </div>
+
+      <div style={SETTINGS_CARD}>
+        <div style={{ fontSize:13, fontWeight:700, color:'#5A5A66', textTransform:'uppercase', letterSpacing:'.05em', marginBottom:4 }}>Employment Details</div>
+        <div style={{ fontSize:12, color:'#9A9AA4', marginBottom:14 }}>
+          {isHRAdminUser ? 'Editable by HR Admin.' : 'Set by HR Admin — view only.'}
+        </div>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, marginBottom:14 }}>
+          {isHRAdminUser ? (
+            <>
+              <div><label style={SETTINGS_LABEL}>Employee ID</label><input value={empForm.employee_id} onChange={e => setE('employee_id', e.target.value)} style={SETTINGS_INPUT} /></div>
+              <div><label style={SETTINGS_LABEL}>Department</label><input value={empForm.department} onChange={e => setE('department', e.target.value)} style={SETTINGS_INPUT} /></div>
+              <div><label style={SETTINGS_LABEL}>Designation</label><input value={empForm.designation} onChange={e => setE('designation', e.target.value)} style={SETTINGS_INPUT} /></div>
+              <div><label style={SETTINGS_LABEL}>Joining Date</label><input type="date" value={empForm.joining_date} onChange={e => setE('joining_date', e.target.value)} style={SETTINGS_INPUT} /></div>
+              <div><label style={SETTINGS_LABEL}>Date of Birth</label><input type="date" value={empForm.date_of_birth} onChange={e => setE('date_of_birth', e.target.value)} style={SETTINGS_INPUT} /></div>
+            </>
+          ) : (
+            <>
+              {viewField('Employee ID', empForm.employee_id)}
+              {viewField('Department', empForm.department)}
+              {viewField('Designation', empForm.designation)}
+              {viewField('Joining Date', empForm.joining_date)}
+              {viewField('Date of Birth', empForm.date_of_birth)}
+            </>
+          )}
+          {viewField('Reports To', emp?.manager_name)}
+        </div>
+
+        <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:12 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:'#9A9AA4', textTransform:'uppercase', letterSpacing:'.04em' }}>Sensitive Details</div>
+          <button onClick={() => setShowSensitive(v => !v)} style={{ background:'none', border:'none', cursor:'pointer', color:'#7E7E88', padding:2 }}>
+            <Icon name={showSensitive ? 'eye-off' : 'eye'} size={14} />
+          </button>
+        </div>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
+          {isHRAdminUser ? (
+            <>
+              <div><label style={SETTINGS_LABEL}>PAN Number</label><input value={empForm.pan_number} onChange={e => setE('pan_number', e.target.value)} style={SETTINGS_INPUT} /></div>
+              <div><label style={SETTINGS_LABEL}>Bank Account Number</label><input value={empForm.bank_account_number} onChange={e => setE('bank_account_number', e.target.value)} style={SETTINGS_INPUT} /></div>
+              <div><label style={SETTINGS_LABEL}>Bank IFSC</label><input value={empForm.bank_ifsc} onChange={e => setE('bank_ifsc', e.target.value)} style={SETTINGS_INPUT} /></div>
+            </>
+          ) : (
+            <>
+              {viewField('PAN Number', showSensitive ? empForm.pan_number : (empForm.pan_number ? '●●●●●●●●' : ''))}
+              {viewField('Bank Account Number', showSensitive ? empForm.bank_account_number : (empForm.bank_account_number ? '●●●●●●●●' : ''))}
+              {viewField('Bank IFSC', showSensitive ? empForm.bank_ifsc : (empForm.bank_ifsc ? '●●●●●●●●' : ''))}
+            </>
+          )}
+        </div>
+      </div>
+
+      {error && <div style={{ background:'#FEF2F2', border:'1px solid #FECACA', borderRadius:8, padding:'9px 14px', color:'#DC2626', fontSize:13, marginBottom:12 }}>{error}</div>}
+      {success && <div style={{ background:'#ECFDF3', border:'1px solid #86EFAC', borderRadius:8, padding:'9px 14px', color:'#16A34A', fontSize:13, marginBottom:12 }}>Profile updated successfully.</div>}
+
+      <button onClick={save} disabled={saving}
+        style={{ height:42, padding:'0 28px', borderRadius:10, background:ACCENT, color:'#fff', fontSize:14, fontWeight:700, opacity:saving?0.7:1 }}>
+        {saving ? 'Saving…' : 'Save profile'}
+      </button>
+    </>
+  );
+}
+
+function NotificationsTab({ user, onUpdate }) {
   const [teamsUrl, setTeamsUrl] = useState(user.teams_webhook_url || '');
   const [emailDigest, setEmailDigest] = useState(user.email_digest !== false);
   const [saving, setSaving] = useState(false);
   const [testMsg, setTestMsg] = useState('');
-  const [newField, setNewField] = useState({ label:'', field_type:'text', options:'' });
-  const [addingField, setAddingField] = useState(false);
-
-  const saveField = async () => {
-    if (!newField.label.trim()) return;
-    const name = newField.label.toLowerCase().replace(/[^a-z0-9]+/g,'_');
-    const options = newField.field_type === 'select' ? newField.options.split(',').map(s=>s.trim()).filter(Boolean) : [];
-    await api.post('/custom-fields', { name, label: newField.label, field_type: newField.field_type, options });
-    setNewField({ label:'', field_type:'text', options:'' });
-    setAddingField(false);
-    reloadCustomFields?.();
-  };
-
-  const deleteField = async (id) => {
-    await api.delete(`/custom-fields/${id}`);
-    reloadCustomFields?.();
-  };
 
   const save = async () => {
     setSaving(true);
@@ -1222,63 +1437,9 @@ function SettingsPage({ user, onUpdate, isAdmin, customFieldDefs, reloadCustomFi
     setTimeout(() => setTestMsg(''), 3000);
   };
 
-  const card = { background:'#fff', border:'1px solid #ECECEF', borderRadius:14, padding:'20px 22px', marginBottom:16, boxShadow:'0 1px 2px rgba(16,16,30,0.04)' };
-  const inpStyle = { width:'100%', height:40, padding:'0 12px', border:'1px solid #E5E5EA', borderRadius:9, fontSize:13.5, background:'#FAFAFB', outline:'none' };
-
   return (
-    <div style={{ maxWidth:560 }}>
-      <h2 style={{ fontSize:20, fontWeight:800, letterSpacing:'-0.02em', marginBottom:20 }}>Profile</h2>
-
-      <div style={card}>
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, marginBottom:14 }}>
-          <div>
-            <label style={{ display:'block', fontSize:12, fontWeight:600, color:'#6B6B76', textTransform:'uppercase', letterSpacing:'0.04em', marginBottom:5 }}>Full name</label>
-            <input value={profileForm.name} onChange={e => setP('name', e.target.value)} placeholder="Your name" style={inpStyle} />
-          </div>
-          <div>
-            <label style={{ display:'block', fontSize:12, fontWeight:600, color:'#6B6B76', textTransform:'uppercase', letterSpacing:'0.04em', marginBottom:5 }}>Email</label>
-            <input type="email" value={profileForm.email} onChange={e => setP('email', e.target.value)} placeholder="you@company.com" style={inpStyle} />
-          </div>
-          <div>
-            <label style={{ display:'block', fontSize:12, fontWeight:600, color:'#6B6B76', textTransform:'uppercase', letterSpacing:'0.04em', marginBottom:5 }}>New password</label>
-            <input type="password" value={profileForm.newPassword} onChange={e => setP('newPassword', e.target.value)} placeholder="Leave blank to keep current" style={inpStyle} />
-          </div>
-          <div>
-            <label style={{ display:'block', fontSize:12, fontWeight:600, color:'#6B6B76', textTransform:'uppercase', letterSpacing:'0.04em', marginBottom:5 }}>Confirm password</label>
-            <input type="password" value={profileForm.confirmPassword} onChange={e => setP('confirmPassword', e.target.value)} placeholder="Repeat new password" style={inpStyle} />
-          </div>
-        </div>
-
-        <div style={{ marginBottom:16 }}>
-          <label style={{ display:'block', fontSize:12, fontWeight:600, color:'#6B6B76', textTransform:'uppercase', letterSpacing:'0.04em', marginBottom:8 }}>Avatar colour</label>
-          <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
-            {PROFILE_COLORS.map(c => (
-              <button key={c} onClick={() => setP('color', c)}
-                style={{ width:28, height:28, borderRadius:'50%', background:c, border: profileForm.color === c ? '3px solid #19191F' : '3px solid transparent', cursor:'pointer', transition:'border .1s' }} />
-            ))}
-            <div style={{ position:'relative', width:28, height:28, borderRadius:'50%', background:profileForm.color, border:'2px solid #E5E5EA', overflow:'hidden' }}>
-              <input type="color" value={profileForm.color} onChange={e => setP('color', e.target.value)}
-                style={{ position:'absolute', inset:-4, width:'calc(100% + 8px)', height:'calc(100% + 8px)', cursor:'pointer', border:'none', padding:0, opacity:0 }} />
-            </div>
-          </div>
-        </div>
-
-        {profileError && (
-          <div style={{ background:'#FEF2F2', border:'1px solid #FECACA', borderRadius:8, padding:'9px 14px', color:'#DC2626', fontSize:13, marginBottom:12 }}>{profileError}</div>
-        )}
-        {profileSuccess && (
-          <div style={{ background:'#ECFDF3', border:'1px solid #86EFAC', borderRadius:8, padding:'9px 14px', color:'#16A34A', fontSize:13, marginBottom:12 }}>Profile updated successfully.</div>
-        )}
-
-        <button onClick={saveProfile} disabled={profileSaving}
-          style={{ height:40, padding:'0 24px', borderRadius:9, background:ACCENT, color:'#fff', fontSize:13.5, fontWeight:700, opacity:profileSaving?0.7:1 }}>
-          {profileSaving ? 'Saving…' : 'Save profile'}
-        </button>
-      </div>
-
-      <h2 style={{ fontSize:20, fontWeight:800, letterSpacing:'-0.02em', marginBottom:20, marginTop:32 }}>Notification Settings</h2>
-
-      <div style={card}>
+    <>
+      <div style={SETTINGS_CARD}>
         <div style={{ fontSize:15, fontWeight:700, marginBottom:4 }}>Email digest</div>
         <div style={{ fontSize:13, color:'#7E7E88', marginBottom:14 }}>Receive a morning email with today's follow-ups (weekdays at 8am).</div>
         <label style={{ display:'flex', alignItems:'center', gap:10, cursor:'pointer' }}>
@@ -1290,7 +1451,7 @@ function SettingsPage({ user, onUpdate, isAdmin, customFieldDefs, reloadCustomFi
         </label>
       </div>
 
-      <div style={card}>
+      <div style={SETTINGS_CARD}>
         <div style={{ fontSize:15, fontWeight:700, marginBottom:4 }}>Microsoft Teams</div>
         <div style={{ fontSize:13, color:'#7E7E88', marginBottom:14 }}>
           Reminders are sent via a Teams Workflow to a <strong>channel</strong> or <strong>group chat</strong>. Note: individual (1:1) chats are not supported by Microsoft's webhook workflows.
@@ -1298,7 +1459,7 @@ function SettingsPage({ user, onUpdate, isAdmin, customFieldDefs, reloadCustomFi
         <div style={{ display:'flex', gap:8 }}>
           <input value={teamsUrl} onChange={e => setTeamsUrl(e.target.value)}
             placeholder="https://prod-xx.westus.logic.azure.com/workflows/..."
-            style={{ ...inpStyle, flex:1 }} />
+            style={{ ...SETTINGS_INPUT, flex:1 }} />
           {teamsUrl && (
             <button onClick={testTeams}
               style={{ height:40, padding:'0 14px', borderRadius:9, fontSize:13, fontWeight:600, background:'#F2F2F5', color:'#3A3A44', whiteSpace:'nowrap' }}>
@@ -1352,61 +1513,251 @@ function SettingsPage({ user, onUpdate, isAdmin, customFieldDefs, reloadCustomFi
         style={{ height:42, padding:'0 28px', borderRadius:10, background:ACCENT, color:'#fff', fontSize:14, fontWeight:700, opacity:saving?0.7:1 }}>
         {saving ? 'Saving…' : 'Save settings'}
       </button>
+    </>
+  );
+}
 
-      <CurrencySettingsCard card={card} inpStyle={inpStyle}/>
+function MockQR({ seed }) {
+  // Deterministic faux-QR pattern (visual only — no real 2FA secret is generated or stored).
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  const cells = Array.from({ length: 64 }, (_, i) => { h = (h * 1103515245 + 12345) >>> 0; return (h >> 16) % 2; });
+  return (
+    <div style={{ width:120, height:120, display:'grid', gridTemplateColumns:'repeat(8,1fr)', gap:2, background:'#fff', border:'1px solid #E5E5EA', borderRadius:8, padding:8 }}>
+      {cells.map((v, i) => <div key={i} style={{ background: v ? '#19191F' : '#fff' }} />)}
+    </div>
+  );
+}
 
-      {/* Custom Fields — admin only */}
-      {isAdmin && (
-        <div style={{ marginTop:28 }}>
-          <h2 style={{ fontSize:20, fontWeight:800, letterSpacing:'-0.02em', marginBottom:20 }}>Custom Contact Fields</h2>
-          <div style={{ background:'#fff', border:'1px solid #ECECEF', borderRadius:14, padding:'20px 22px', boxShadow:'0 1px 2px rgba(16,16,30,0.04)' }}>
-            <div style={{ fontSize:13, color:'#7E7E88', marginBottom:16 }}>
-              Add extra fields that appear on every contact. Useful for industry, tier, contract type, etc.
-            </div>
-            {customFieldDefs?.length > 0 && (
-              <div style={{ marginBottom:16 }}>
-                {customFieldDefs.map(def => (
-                  <div key={def.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'9px 12px', background:'#FAFAFB', border:'1px solid #EEEEF1', borderRadius:9, marginBottom:6 }}>
-                    <span style={{ fontSize:13, fontWeight:600, flex:1 }}>{def.label}</span>
-                    <span style={{ fontSize:11.5, color:'#9A9AA4', padding:'2px 8px', borderRadius:6, background:'#F0F0F3' }}>{def.field_type}</span>
-                    {def.field_type === 'select' && <span style={{ fontSize:11.5, color:'#9A9AA4' }}>{(def.options||[]).join(', ')}</span>}
-                    <button onClick={() => deleteField(def.id)} style={{ color:'#DC2626', background:'none', border:'none', cursor:'pointer', padding:'4px' }}><Icon name="trash" size={14}/></button>
-                  </div>
-                ))}
-              </div>
-            )}
-            {addingField ? (
-              <div style={{ display:'flex', flexDirection:'column', gap:10, padding:'14px', background:'#F8F8FB', borderRadius:10, border:'1px dashed #D1D1D8' }}>
-                <input value={newField.label} onChange={e => setNewField(f=>({...f,label:e.target.value}))} placeholder="Field label (e.g. Industry)" style={{ height:38, padding:'0 12px', border:'1px solid #E5E5EA', borderRadius:9, fontSize:13, background:'#fff', outline:'none' }} />
-                <div style={{ display:'flex', gap:8 }}>
-                  <select value={newField.field_type} onChange={e => setNewField(f=>({...f,field_type:e.target.value}))}
-                    style={{ flex:1, height:38, padding:'0 12px', border:'1px solid #E5E5EA', borderRadius:9, fontSize:13, background:'#fff', outline:'none', cursor:'pointer' }}>
-                    {[['text','Text'],['number','Number'],['date','Date'],['select','Dropdown'],['url','URL']].map(([k,l]) => <option key={k} value={k}>{l}</option>)}
-                  </select>
-                  {newField.field_type === 'select' && (
-                    <input value={newField.options} onChange={e => setNewField(f=>({...f,options:e.target.value}))} placeholder="Options, comma-separated" style={{ flex:2, height:38, padding:'0 12px', border:'1px solid #E5E5EA', borderRadius:9, fontSize:13, background:'#fff', outline:'none' }} />
-                  )}
-                </div>
-                <div style={{ display:'flex', gap:8 }}>
-                  <button onClick={saveField} style={{ height:36, padding:'0 16px', borderRadius:9, background:ACCENT, color:'#fff', fontSize:13, fontWeight:700 }}>Add field</button>
-                  <button onClick={() => setAddingField(false)} style={{ height:36, padding:'0 14px', borderRadius:9, background:'#F2F2F5', color:'#5A5A66', fontSize:13, fontWeight:600 }}>Cancel</button>
-                </div>
-              </div>
-            ) : (
-              <button onClick={() => setAddingField(true)}
-                style={{ display:'flex', alignItems:'center', gap:7, height:38, padding:'0 16px', borderRadius:9, border:'1.5px dashed #D1D1D8', background:'transparent', color:'#5A5A66', fontSize:13, fontWeight:600, cursor:'pointer' }}>
-                <Icon name="plus" size={15} />New field
-              </button>
-            )}
+function SecurityTab({ user, onUpdate }) {
+  const [pwForm, setPwForm] = useState({ currentPassword:'', newPassword:'', confirmPassword:'' });
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwError, setPwError] = useState('');
+  const [pwSuccess, setPwSuccess] = useState(false);
+
+  const [twoFA, setTwoFA] = useState(!!user.two_factor_enabled);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [code, setCode] = useState('');
+  const [twoFAError, setTwoFAError] = useState('');
+  const [twoFASaving, setTwoFASaving] = useState(false);
+  const secret = React.useMemo(() => 'MOCK-' + user.id.replace(/-/g,'').slice(0,16).toUpperCase(), [user.id]);
+
+  const setPw = (k, v) => setPwForm(f => ({ ...f, [k]: v }));
+
+  const changePassword = async () => {
+    if (!pwForm.currentPassword) { setPwError('Current password is required'); return; }
+    if (!isValidPassword(pwForm.newPassword)) { setPwError(PASSWORD_RULE_MESSAGE); return; }
+    if (pwForm.newPassword !== pwForm.confirmPassword) { setPwError('Passwords do not match'); return; }
+    setPwSaving(true); setPwError(''); setPwSuccess(false);
+    try {
+      await api.put(`/users/${user.id}`, { currentPassword: pwForm.currentPassword, password: pwForm.newPassword });
+      setPwForm({ currentPassword:'', newPassword:'', confirmPassword:'' });
+      setPwSuccess(true);
+      setTimeout(() => setPwSuccess(false), 3000);
+    } catch (err) {
+      setPwError(err.response?.data?.error || 'Failed to change password');
+    } finally {
+      setPwSaving(false);
+    }
+  };
+
+  const startEnable2FA = () => { setSetupOpen(true); setCode(''); setTwoFAError(''); };
+
+  const verify2FA = async () => {
+    if (!/^\d{6}$/.test(code)) { setTwoFAError('Enter the 6-digit code from your authenticator app'); return; }
+    setTwoFASaving(true); setTwoFAError('');
+    try {
+      await api.put(`/users/${user.id}`, { two_factor_enabled: true });
+      await onUpdate();
+      setTwoFA(true);
+      setSetupOpen(false);
+    } finally { setTwoFASaving(false); }
+  };
+
+  const disable2FA = async () => {
+    if (!window.confirm('Disable two-factor authentication?')) return;
+    setTwoFASaving(true);
+    try {
+      await api.put(`/users/${user.id}`, { two_factor_enabled: false });
+      await onUpdate();
+      setTwoFA(false);
+    } finally { setTwoFASaving(false); }
+  };
+
+  return (
+    <>
+      <div style={SETTINGS_CARD}>
+        <div style={{ fontSize:15, fontWeight:700, marginBottom:4 }}>Change Password</div>
+        <div style={{ fontSize:13, color:'#7E7E88', marginBottom:14 }}>Enter your current password to set a new one.</div>
+        <div style={{ display:'flex', flexDirection:'column', gap:14, maxWidth:360 }}>
+          <div>
+            <label style={SETTINGS_LABEL}>Current password</label>
+            <input type="password" value={pwForm.currentPassword} onChange={e => setPw('currentPassword', e.target.value)} style={SETTINGS_INPUT} />
+          </div>
+          <div>
+            <label style={SETTINGS_LABEL}>New password</label>
+            <input type="password" value={pwForm.newPassword} onChange={e => setPw('newPassword', e.target.value)} placeholder="8+ chars, upper, lower, number, symbol" style={SETTINGS_INPUT} />
+          </div>
+          <div>
+            <label style={SETTINGS_LABEL}>Confirm new password</label>
+            <input type="password" value={pwForm.confirmPassword} onChange={e => setPw('confirmPassword', e.target.value)} style={SETTINGS_INPUT} />
           </div>
         </div>
+        {pwError && <div style={{ marginTop:12, background:'#FEF2F2', border:'1px solid #FECACA', borderRadius:8, padding:'9px 14px', color:'#DC2626', fontSize:13 }}>{pwError}</div>}
+        {pwSuccess && <div style={{ marginTop:12, background:'#ECFDF3', border:'1px solid #86EFAC', borderRadius:8, padding:'9px 14px', color:'#16A34A', fontSize:13 }}>Password changed successfully.</div>}
+        <button onClick={changePassword} disabled={pwSaving}
+          style={{ marginTop:16, height:40, padding:'0 22px', borderRadius:9, background:ACCENT, color:'#fff', fontSize:13.5, fontWeight:700, opacity:pwSaving?0.7:1 }}>
+          {pwSaving ? 'Saving…' : 'Change password'}
+        </button>
+      </div>
+
+      <div style={SETTINGS_CARD}>
+        <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:4 }}>
+          <div style={{ fontSize:15, fontWeight:700, flex:1 }}>Two-Factor Authentication</div>
+          <span style={{ fontSize:11, fontWeight:700, padding:'3px 8px', borderRadius:6, background:'#F0F0F3', color:'#9A9AA4' }}>MOCK</span>
+        </div>
+        <div style={{ fontSize:13, color:'#7E7E88', marginBottom:14 }}>
+          Add an extra layer of security to your account using an authenticator app. This is a demo flow — no real codes are verified.
+        </div>
+
+        {!setupOpen && (
+          <label style={{ display:'flex', alignItems:'center', gap:10, cursor:'pointer' }}>
+            <div onClick={() => twoFA ? disable2FA() : startEnable2FA()}
+              style={{ width:42, height:24, borderRadius:12, background: twoFA ? ACCENT : '#D1D1D8', position:'relative', transition:'background .2s', cursor:'pointer', opacity: twoFASaving ? 0.6 : 1 }}>
+              <div style={{ position:'absolute', top:3, left: twoFA ? 21 : 3, width:18, height:18, borderRadius:'50%', background:'#fff', boxShadow:'0 1px 3px rgba(0,0,0,0.2)', transition:'left .2s' }} />
+            </div>
+            <span style={{ fontSize:14, fontWeight:500 }}>{twoFA ? 'Enabled' : 'Disabled'}</span>
+          </label>
+        )}
+
+        {setupOpen && (
+          <div style={{ background:'#F8F8FB', borderRadius:10, padding:'16px', display:'flex', gap:20, flexWrap:'wrap' }}>
+            <MockQR seed={secret} />
+            <div style={{ flex:1, minWidth:200 }}>
+              <div style={{ fontSize:12, color:'#7E7E88', marginBottom:6 }}>Scan this code with your authenticator app, or enter the key manually:</div>
+              <div style={{ fontFamily:'monospace', fontSize:13, fontWeight:700, background:'#fff', border:'1px solid #E5E5EA', borderRadius:7, padding:'6px 10px', marginBottom:14, display:'inline-block' }}>{secret}</div>
+              <label style={SETTINGS_LABEL}>6-digit code</label>
+              <input value={code} onChange={e => setCode(e.target.value.replace(/\D/g,'').slice(0,6))} placeholder="123456"
+                style={{ ...SETTINGS_INPUT, maxWidth:140, letterSpacing:'0.2em', fontWeight:700 }} />
+              {twoFAError && <div style={{ marginTop:8, fontSize:12.5, color:'#DC2626' }}>{twoFAError}</div>}
+              <div style={{ display:'flex', gap:8, marginTop:12 }}>
+                <button onClick={verify2FA} disabled={twoFASaving}
+                  style={{ height:36, padding:'0 16px', borderRadius:8, background:ACCENT, color:'#fff', fontSize:13, fontWeight:700, border:'none', cursor:'pointer' }}>
+                  Verify & Enable
+                </button>
+                <button onClick={() => setSetupOpen(false)}
+                  style={{ height:36, padding:'0 14px', borderRadius:8, background:'#F2F2F5', color:'#5A5A66', fontSize:13, fontWeight:600, border:'none', cursor:'pointer' }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function CustomFieldsTab({ customFieldDefs, reloadCustomFields }) {
+  const [newField, setNewField] = useState({ label:'', field_type:'text', options:'' });
+  const [addingField, setAddingField] = useState(false);
+
+  const saveField = async () => {
+    if (!newField.label.trim()) return;
+    const name = newField.label.toLowerCase().replace(/[^a-z0-9]+/g,'_');
+    const options = newField.field_type === 'select' ? newField.options.split(',').map(s=>s.trim()).filter(Boolean) : [];
+    await api.post('/custom-fields', { name, label: newField.label, field_type: newField.field_type, options });
+    setNewField({ label:'', field_type:'text', options:'' });
+    setAddingField(false);
+    reloadCustomFields?.();
+  };
+
+  const deleteField = async (id) => {
+    await api.delete(`/custom-fields/${id}`);
+    reloadCustomFields?.();
+  };
+
+  return (
+    <div style={SETTINGS_CARD}>
+      <div style={{ fontSize:13, color:'#7E7E88', marginBottom:16 }}>
+        Add extra fields that appear on every contact. Useful for industry, tier, contract type, etc.
+      </div>
+      {customFieldDefs?.length > 0 && (
+        <div style={{ marginBottom:16 }}>
+          {customFieldDefs.map(def => (
+            <div key={def.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'9px 12px', background:'#FAFAFB', border:'1px solid #EEEEF1', borderRadius:9, marginBottom:6 }}>
+              <span style={{ fontSize:13, fontWeight:600, flex:1 }}>{def.label}</span>
+              <span style={{ fontSize:11.5, color:'#9A9AA4', padding:'2px 8px', borderRadius:6, background:'#F0F0F3' }}>{def.field_type}</span>
+              {def.field_type === 'select' && <span style={{ fontSize:11.5, color:'#9A9AA4' }}>{(def.options||[]).join(', ')}</span>}
+              <button onClick={() => deleteField(def.id)} style={{ color:'#DC2626', background:'none', border:'none', cursor:'pointer', padding:'4px' }}><Icon name="trash" size={14}/></button>
+            </div>
+          ))}
+        </div>
+      )}
+      {addingField ? (
+        <div style={{ display:'flex', flexDirection:'column', gap:10, padding:'14px', background:'#F8F8FB', borderRadius:10, border:'1px dashed #D1D1D8' }}>
+          <input value={newField.label} onChange={e => setNewField(f=>({...f,label:e.target.value}))} placeholder="Field label (e.g. Industry)" style={{ height:38, padding:'0 12px', border:'1px solid #E5E5EA', borderRadius:9, fontSize:13, background:'#fff', outline:'none' }} />
+          <div style={{ display:'flex', gap:8 }}>
+            <select value={newField.field_type} onChange={e => setNewField(f=>({...f,field_type:e.target.value}))}
+              style={{ flex:1, height:38, padding:'0 12px', border:'1px solid #E5E5EA', borderRadius:9, fontSize:13, background:'#fff', outline:'none', cursor:'pointer' }}>
+              {[['text','Text'],['number','Number'],['date','Date'],['select','Dropdown'],['url','URL']].map(([k,l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+            {newField.field_type === 'select' && (
+              <input value={newField.options} onChange={e => setNewField(f=>({...f,options:e.target.value}))} placeholder="Options, comma-separated" style={{ flex:2, height:38, padding:'0 12px', border:'1px solid #E5E5EA', borderRadius:9, fontSize:13, background:'#fff', outline:'none' }} />
+            )}
+          </div>
+          <div style={{ display:'flex', gap:8 }}>
+            <button onClick={saveField} style={{ height:36, padding:'0 16px', borderRadius:9, background:ACCENT, color:'#fff', fontSize:13, fontWeight:700 }}>Add field</button>
+            <button onClick={() => setAddingField(false)} style={{ height:36, padding:'0 14px', borderRadius:9, background:'#F2F2F5', color:'#5A5A66', fontSize:13, fontWeight:600 }}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => setAddingField(true)}
+          style={{ display:'flex', alignItems:'center', gap:7, height:38, padding:'0 16px', borderRadius:9, border:'1.5px dashed #D1D1D8', background:'transparent', color:'#5A5A66', fontSize:13, fontWeight:600, cursor:'pointer' }}>
+          <Icon name="plus" size={15} />New field
+        </button>
       )}
     </div>
   );
 }
 
+function SettingsPage({ user, onUpdate, isAdmin, customFieldDefs, reloadCustomFields }) {
+  const [tab, setTab] = useState('profile');
+  const isHRAdminUser = isAdmin || user.hr_role === 'hr_admin';
+
+  const TABS = [
+    { key:'profile', label:'Profile' },
+    { key:'notifications', label:'Notifications' },
+    { key:'currency', label:'Currency & Display' },
+    { key:'security', label:'Change Password & 2FA' },
+    ...(isAdmin ? [{ key:'custom-fields', label:'Custom Fields' }] : []),
+  ];
+
+  return (
+    <div style={{ maxWidth:640 }}>
+      <div style={{ display:'flex', gap:4, marginBottom:24, borderBottom:'1px solid #EEEEF1', paddingBottom:2, flexWrap:'wrap' }}>
+        {TABS.map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            style={{ padding:'9px 16px', borderRadius:'8px 8px 0 0', fontSize:13.5, fontWeight:600, border:'none', cursor:'pointer',
+              background: tab === t.key ? '#fff' : 'transparent',
+              color: tab === t.key ? ACCENT : '#6B6B76',
+              borderBottom: tab === t.key ? `2px solid ${ACCENT}` : '2px solid transparent' }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'profile' && <ProfileTab user={user} onUpdate={onUpdate} isHRAdminUser={isHRAdminUser} />}
+      {tab === 'notifications' && <NotificationsTab user={user} onUpdate={onUpdate} />}
+      {tab === 'currency' && <CurrencySettingsCard card={SETTINGS_CARD} inpStyle={SETTINGS_INPUT} />}
+      {tab === 'security' && <SecurityTab user={user} onUpdate={onUpdate} />}
+      {tab === 'custom-fields' && isAdmin && <CustomFieldsTab customFieldDefs={customFieldDefs} reloadCustomFields={reloadCustomFields} />}
+    </div>
+  );
+}
+
 // ── AddItemModal ─────────────────────────────────────────────────────────────
-function AddItemModal({ projectId, milestones, users, contacts, defaults = {}, editItem, onClose, onSaved, hasCrmContact }) {
+function AddItemModal({ projectId, milestones, users, contacts, defaults = {}, editItem, onClose, onSaved, hasCrmContact, readOnly = false }) {
   const isEdit = !!editItem;
   const [form, setForm] = useState({
     section_type:        defaults.section_type        || editItem?.section_type        || 'task',
@@ -1474,6 +1825,21 @@ function AddItemModal({ projectId, milestones, users, contacts, defaults = {}, e
     }
   };
 
+  // Read-only viewers (assignees who aren't the project owner) may still update `status` —
+  // the one progress-marking field the server allows them to touch.
+  const saveStatus = async (status) => {
+    setSaving(true); setError('');
+    try {
+      await api.put(`/projects/${projectId}/items/${editItem.id}`, { status });
+      set('status', status);
+      onSaved();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to update status');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const labelStyle = { display:'block', fontSize:11.5, fontWeight:700, color:'#6B6B76', textTransform:'uppercase', letterSpacing:'0.04em', marginBottom:5 };
   const inpStyle   = { width:'100%', height:38, padding:'0 11px', border:'1px solid #E5E5EA', borderRadius:9, fontSize:13.5, background:'#FAFAFB', outline:'none', boxSizing:'border-box' };
   const cycleIU = v => v === null ? 1 : v === 1 ? 0 : null;
@@ -1487,6 +1853,110 @@ function AddItemModal({ projectId, milestones, users, contacts, defaults = {}, e
   );
 
   const delivStatuses = DELIVERABLE_STATUSES;
+
+  // Read-only view: assignee-in-someone-else's-project. Every field is plain text except
+  // status, which is the one thing the server still lets a non-owner assignee update —
+  // mirroring the read-only-except-completion model used for standalone tasks.
+  if (readOnly) {
+    const typeMeta = SECTION_TYPE_META[form.section_type];
+    const viewRow = (label, value) => (
+      <div>
+        <label style={labelStyle}>{label}</label>
+        <div style={{ fontSize:13.5, color: value ? '#1A1A24' : '#C4C4CC', fontStyle: value ? 'normal' : 'italic' }}>{value || '—'}</div>
+      </div>
+    );
+    const iuLabel = v => v === 2 ? 'High' : v === 1 ? 'Medium' : v === 0 ? 'Low' : null;
+    const isDone = form.section_type === 'deliverable' ? form.status === 'delivered' : form.status === 'done';
+
+    return (
+      <div style={{ position:'fixed', inset:0, zIndex:60, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
+        <div onClick={onClose} style={{ position:'absolute', inset:0, background:'rgba(20,20,30,0.34)' }} />
+        <div style={{ position:'relative', width:480, maxHeight:'90vh', overflowY:'auto', background:'#fff', borderRadius:18, boxShadow:'0 24px 60px rgba(20,20,30,0.24)' }}>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'18px 22px', borderBottom:'1px solid #EEEEF1' }}>
+            <div style={{ fontSize:16, fontWeight:700 }}>Item Details</div>
+            <button onClick={onClose} style={{ color:'#8A8A94', background:'none', border:'none', cursor:'pointer' }}><Icon name="x" size={18}/></button>
+          </div>
+          <div style={{ padding:'18px 22px', display:'flex', flexDirection:'column', gap:14 }}>
+            <div style={{ fontSize:12, color:'#9A9AA4', background:'#F8F8FB', borderRadius:8, padding:'8px 12px' }}>
+              You're assigned this item in a project you don't own — you can update its status, but only the project owner can edit other details.
+            </div>
+
+            <div>
+              <span style={{ fontSize:11, fontWeight:700, padding:'3px 9px', borderRadius:6, color:typeMeta.color, background:typeMeta.bg }}>{typeMeta.label}</span>
+            </div>
+
+            {viewRow('Title', form.title)}
+            {form.body && viewRow(form.section_type === 'context' ? 'Content' : 'Details', form.body)}
+
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+              {viewRow('Assignee', users.find(u => u.id === form.assignee_id)?.name)}
+              {viewRow('Due date', form.due_date ? new Date(form.due_date).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : null)}
+            </div>
+
+            {form.section_type !== 'context' && (
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+                {viewRow('Importance', iuLabel(form.importance))}
+                {viewRow('Urgency', iuLabel(form.urgency))}
+              </div>
+            )}
+
+            {form.milestone_id && viewRow('Milestone', milestones.find(m => m.id === form.milestone_id)?.title)}
+            {form.waiting_on && viewRow('Waiting on', form.waiting_on)}
+            {form.section_type === 'followup' && form.followup_contact_id &&
+              viewRow('With whom', (contacts||[]).find(c => c.id === form.followup_contact_id)?.name)}
+
+            {form.section_type === 'deliverable' && form.checklist.length > 0 && (
+              <div>
+                <label style={labelStyle}>Definition of done</label>
+                <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
+                  {form.checklist.map((c, idx) => (
+                    <div key={idx} style={{ display:'flex', alignItems:'center', gap:8, fontSize:13.5 }}>
+                      <Icon name={c.done ? 'check' : 'x'} size={13} color={c.done ? '#16A34A' : '#C4C4CC'} />
+                      <span style={{ textDecoration: c.done ? 'line-through' : 'none', color: c.done ? '#9A9AA4' : '#1A1A24' }}>{c.text}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div>
+              <label style={labelStyle}>Status</label>
+              {form.section_type === 'deliverable' ? (
+                <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+                  {delivStatuses.map(s => (
+                    <button key={s.key} onClick={() => saveStatus(s.key)} disabled={saving}
+                      style={{ height:32, padding:'0 13px', borderRadius:8, fontSize:12.5, fontWeight:600, cursor:'pointer',
+                        border: form.status === s.key ? `2px solid ${s.color}` : '1.5px solid #E5E5EA',
+                        background: form.status === s.key ? s.bg : '#FAFAFB',
+                        color: form.status === s.key ? s.color : '#7A7A88' }}>
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <button onClick={() => saveStatus(isDone ? 'open' : 'done')} disabled={saving}
+                  style={{ display:'flex', alignItems:'center', gap:8, height:38, padding:'0 16px', borderRadius:9,
+                    background: isDone ? '#ECFDF3' : '#F2F2F5', color: isDone ? '#16A34A' : '#5A5A66',
+                    fontSize:13, fontWeight:700, border: isDone ? '1px solid #86EFAC' : 'none', cursor:'pointer', opacity:saving?.7:1 }}>
+                  <Icon name="check" size={14} />
+                  {isDone ? 'Completed' : 'Mark as complete'}
+                </button>
+              )}
+            </div>
+
+            {error && (
+              <div style={{ background:'#FEF2F2', border:'1px solid #FECACA', borderRadius:8, padding:'9px 13px', color:'#DC2626', fontSize:13 }}>
+                {error}
+              </div>
+            )}
+          </div>
+          <div style={{ display:'flex', justifyContent:'flex-end', padding:'14px 22px', borderTop:'1px solid #EEEEF1' }}>
+            <button onClick={onClose} style={{ height:38, padding:'0 16px', borderRadius:9, fontSize:13.5, fontWeight:600, color:'#5A5A66', background:'#F2F2F5', border:'none', cursor:'pointer' }}>Close</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ position:'fixed', inset:0, zIndex:60, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
@@ -1577,17 +2047,19 @@ function AddItemModal({ projectId, milestones, users, contacts, defaults = {}, e
               <div>
                 <label style={labelStyle}>Importance</label>
                 <div style={{ display:'flex', gap:5 }}>
-                  {iuBtn(null,  '—',    form.importance === null, v => set('importance', v))}
-                  {iuBtn(0,    'Low',  form.importance === 0,    v => set('importance', v))}
-                  {iuBtn(1,    'High', form.importance === 1,    v => set('importance', v))}
+                  {iuBtn(null,  '—',      form.importance === null, v => set('importance', v))}
+                  {iuBtn(0,    'Low',    form.importance === 0,    v => set('importance', v))}
+                  {iuBtn(1,    'Medium', form.importance === 1,    v => set('importance', v))}
+                  {iuBtn(2,    'High',   form.importance === 2,    v => set('importance', v))}
                 </div>
               </div>
               <div>
                 <label style={labelStyle}>Urgency</label>
                 <div style={{ display:'flex', gap:5 }}>
-                  {iuBtn(null,  '—',    form.urgency === null, v => set('urgency', v))}
-                  {iuBtn(0,    'Low',  form.urgency === 0,    v => set('urgency', v))}
-                  {iuBtn(1,    'High', form.urgency === 1,    v => set('urgency', v))}
+                  {iuBtn(null,  '—',      form.urgency === null, v => set('urgency', v))}
+                  {iuBtn(0,    'Low',    form.urgency === 0,    v => set('urgency', v))}
+                  {iuBtn(1,    'Medium', form.urgency === 1,    v => set('urgency', v))}
+                  {iuBtn(2,    'High',   form.urgency === 2,    v => set('urgency', v))}
                 </div>
               </div>
             </div>
@@ -1810,12 +2282,30 @@ function TimelineTab({ projectId, milestones, items, loadMilestones, loadItems, 
     return 0;
   });
 
+  // Monday 00:00 of the current week — completed items drop off once a new week starts
+  const weekStart = (() => {
+    const d = new Date();
+    const day = d.getDay();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + (day === 0 ? -6 : 1 - day));
+    return d;
+  })();
+
+  // Only actionable items belong on the milestone board — notes (context) never show here,
+  // and items completed before this week rolled over age out (still visible under Tasks > Completed).
+  const boardItems = items.filter(it => {
+    if (!['task','deliverable','followup'].includes(it.section_type)) return false;
+    const isDone = ['done','delivered','approved'].includes(it.status);
+    if (!isDone) return true;
+    return it.completed_at ? new Date(it.completed_at) >= weekStart : true;
+  });
+
   const columns = [
     ...sorted.map(m => ({
       id: m.id, milestone: m,
-      items: items.filter(it => it.milestone_id === m.id),
+      items: boardItems.filter(it => it.milestone_id === m.id),
     })),
-    { id: '__unscheduled', milestone: null, items: items.filter(it => !it.milestone_id) },
+    { id: '__unscheduled', milestone: null, items: boardItems.filter(it => !it.milestone_id) },
   ];
 
   const deleteMilestone = async id => {
@@ -1842,8 +2332,9 @@ function TimelineTab({ projectId, milestones, items, loadMilestones, loadItems, 
             const pct = sorted.length > 1 ? (i / (sorted.length - 1)) * 100 : 50;
             const isOverdue = m.due_date && !m.completed && diffDays(m.due_date) < 0;
             const dotColor = m.completed ? '#16A34A' : isOverdue ? '#DC2626' : ACCENT;
-            const doneCount = items.filter(it => it.milestone_id === m.id && (it.status === 'done' || it.status === 'delivered' || it.status === 'approved')).length;
-            const totalCount = items.filter(it => it.milestone_id === m.id).length;
+            const msItems = items.filter(it => it.milestone_id === m.id && ['task','deliverable','followup'].includes(it.section_type));
+            const doneCount = msItems.filter(it => ['done','delivered','approved'].includes(it.status)).length;
+            const totalCount = msItems.length;
             return (
               <div key={m.id} style={{ position:'absolute', left:`${pct}%`, top:'50%', transform:'translate(-50%,-50%)', display:'flex', flexDirection:'column', alignItems:'center' }}>
                 <div style={{ fontSize:9.5, fontWeight:600, color:'#6B6B76', whiteSpace:'nowrap', marginBottom:5, maxWidth:100, overflow:'hidden', textOverflow:'ellipsis', textAlign:'center' }}>{m.title}</div>
@@ -1964,7 +2455,7 @@ function QuadrantTab({ projectId, items, updateItem, deleteItem, openAddItem, op
   const triage       = quadrantable.filter(it => it.importance === null || it.urgency === null);
   const dropItems    = classified.filter(it => it.importance === 0 && it.urgency === 0);
 
-  const getQuadrant = (imp, urg) => classified.filter(it => it.importance === imp && it.urgency === urg);
+  const getQuadrant = (imp, urg) => classified.filter(it => iuBucket(it.importance) === imp && iuBucket(it.urgency) === urg);
 
   const bulkDropDelete = async () => {
     await Promise.all(dropItems.map(it => deleteItem(it.id)));
@@ -1979,7 +2470,7 @@ function QuadrantTab({ projectId, items, updateItem, deleteItem, openAddItem, op
         <div style={{ fontSize:13, color:'#9A9AA4', maxWidth:340 }}>
           Add tasks, follow-ups, or deliverables from other tabs, then set their importance and urgency to see them here.
         </div>
-        <button onClick={() => openAddItem({ section_type:'task', importance:1, urgency:1 })}
+        <button onClick={() => openAddItem({ section_type:'task', importance:2, urgency:2 })}
           style={{ marginTop:20, height:38, padding:'0 18px', borderRadius:9, background:ACCENT, color:'#fff', fontSize:13.5, fontWeight:700, border:'none', cursor:'pointer' }}>
           + Add first task
         </button>
@@ -2018,6 +2509,7 @@ function QuadrantTab({ projectId, items, updateItem, deleteItem, openAddItem, op
               onMouseLeave={e => e.currentTarget.style.borderColor='#EEEEF1'}>
               <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:4 }}>
                 <SectionTypeBadge type={it.section_type}/>
+                <MedFlag importance={it.importance} urgency={it.urgency}/>
                 {it.due_date && !itDone && <DuePill iso={it.due_date}/>}
                 <div style={{ flex:1 }}/>
                 <button onClick={e => { e.stopPropagation(); deleteItem(it.id); }} style={{ color:'#D4D4DA', background:'none', border:'none', cursor:'pointer', padding:'2px', flexShrink:0 }}>
@@ -2722,7 +3214,7 @@ function ProjectDetail({ projectId, onBack, currentUserId, isAdmin, users, conta
           </button>
         )}
         {activeTab === 'quadrant' && (
-          <button onClick={() => openAddItem({ section_type:'task', importance:1, urgency:1 })}
+          <button onClick={() => openAddItem({ section_type:'task', importance:2, urgency:2 })}
             style={{ display:'flex', alignItems:'center', gap:6, height:34, padding:'0 13px', borderRadius:8,
               background:ACCENT, color:'#fff', fontSize:13, fontWeight:700, border:'none', cursor:'pointer', alignSelf:'center', marginBottom:4 }}>
             <Icon name="plus" size={14}/>Add to Do First
@@ -3121,20 +3613,49 @@ function RetroModal({ project, onClose, onSaved }) {
 }
 
 // ── ProjectsDashboard ─────────────────────────────────────────────────────────
-function ProjectsDashboard({ projects, onSelect }) {
+function ProjectsDashboard({ projects, onSelect, users, contacts, currentUserId, isAdmin }) {
   const [data,    setData]    = useState(null);
   const [ppc,     setPpc]     = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshKey,   setRefreshKey]   = useState(0);
+  const [modalItem,    setModalItem]    = useState(null); // { projectId, item }
+  const [modalMs,      setModalMs]      = useState([]);
+  const [modalLoading, setModalLoading] = useState(false);
 
-  useEffect(() => {
-    Promise.all([
-      api.get('/projects/weekly-review'),
-      api.get('/projects/ppc'),
-    ]).then(([wr, pp]) => {
-      setData(wr.data);
-      setPpc(pp.data);
-    }).finally(() => setLoading(false));
-  }, []);
+  const loadDashboard = useCallback(() => Promise.all([
+    api.get('/projects/weekly-review'),
+    api.get('/projects/ppc'),
+  ]).then(([wr, pp]) => {
+    setData(wr.data);
+    setPpc(pp.data);
+  }).finally(() => setLoading(false)), []);
+
+  useEffect(() => { loadDashboard(); }, [loadDashboard]);
+
+  // Open an item's edit modal right here on the dashboard, without navigating into the project —
+  // closing it should leave the user back on this Overview page.
+  const openItem = async (projectId, itemId) => {
+    if (!itemId) { onSelect(projectId); return; }
+    setModalLoading(true);
+    try {
+      const [itemsRes, msRes] = await Promise.all([
+        api.get(`/projects/${projectId}/items`),
+        api.get(`/projects/${projectId}/milestones`),
+      ]);
+      const item = itemsRes.data.find(i => i.id === itemId);
+      if (item) {
+        const isOwner = isAdmin || item.project_owner_id === currentUserId || item.project_created_by === currentUserId;
+        setModalMs(msRes.data);
+        setModalItem({ projectId, item, readOnly: !isOwner });
+      }
+    } finally { setModalLoading(false); }
+  };
+
+  const onItemSaved = () => {
+    setModalItem(null);
+    loadDashboard();
+    setRefreshKey(k => k + 1);
+  };
 
   const activeProjects = projects.filter(p => p.status === 'active');
   const totalOpen      = activeProjects.reduce((a, p) => a + Number(p.item_count   || 0), 0);
@@ -3160,7 +3681,7 @@ function ProjectsDashboard({ projects, onSelect }) {
   );
 
   const ItemRow = ({ it, showProject = true }) => (
-    <div key={it.id} onClick={() => onSelect(it.project_id || it.id)}
+    <div key={it.id} onClick={() => it.project_id ? openItem(it.project_id, it.id) : onSelect(it.id)}
       style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px', background:'#fff',
         border:'1px solid #ECECEF', borderRadius:9, cursor:'pointer', marginBottom:5,
         borderLeft: showProject && it.project_color ? `4px solid ${it.project_color}` : undefined }}
@@ -3200,7 +3721,7 @@ function ProjectsDashboard({ projects, onSelect }) {
       </div>
 
       {/* Today's focus queue */}
-      <FocusQueue projects={projects} onOpenProject={onSelect}/>
+      <FocusQueue key={refreshKey} projects={projects} onOpenProject={openItem}/>
 
       {/* Delivery Reliability (due date = commitment) */}
       {ppc.length > 0 && (() => {
@@ -3296,7 +3817,7 @@ function ProjectsDashboard({ projects, onSelect }) {
           <SectionHeader title={`Waiting on others · ${waiting.length}`} color="#D97706"/>
           <div style={{ fontSize:12, color:'#9A9AA4', marginBottom:8 }}>Items blocked on someone else — oldest first. Chase them.</div>
           {waiting.map(it => (
-            <div key={it.id} onClick={() => onSelect(it.project_id)}
+            <div key={it.id} onClick={() => openItem(it.project_id, it.id)}
               style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px', background:'#fff',
                 border:'1px solid #ECECEF', borderRadius:9, cursor:'pointer', marginBottom:5,
                 borderLeft:`4px solid ${it.project_color || ACCENT}` }}
@@ -3353,6 +3874,28 @@ function ProjectsDashboard({ projects, onSelect }) {
           <Icon name="check" size={28} color="#16A34A"/>
           <div style={{ marginTop:10, fontSize:15, fontWeight:600, color:'#16A34A' }}>All clear!</div>
           <div style={{ fontSize:13, marginTop:4 }}>No overdue items, no stalled deliverables, no triage needed.</div>
+        </div>
+      )}
+
+      {modalItem && (
+        <AddItemModal
+          projectId={modalItem.projectId}
+          milestones={modalMs}
+          users={users}
+          contacts={contacts}
+          editItem={modalItem.item}
+          readOnly={modalItem.readOnly}
+          hasCrmContact={!!projects.find(p => p.id === modalItem.projectId)?.contact_id}
+          onClose={() => setModalItem(null)}
+          onSaved={onItemSaved}
+        />
+      )}
+      {modalLoading && !modalItem && (
+        <div style={{ position:'fixed', inset:0, zIndex:60, display:'flex', alignItems:'center', justifyContent:'center',
+          background:'rgba(20,20,30,0.15)' }}>
+          <div style={{ background:'#fff', borderRadius:12, padding:'14px 20px', fontSize:13, color:'#6B6B76', boxShadow:'0 12px 30px rgba(20,20,30,0.18)' }}>
+            Loading item…
+          </div>
         </div>
       )}
     </div>
@@ -3435,7 +3978,7 @@ function FocusQueue({ onOpenProject, projects = [] }) {
   const Row = ({ it, planRow }) => {
     const isDone = DONE.includes(it.status);
     return (
-      <div onClick={() => onOpenProject(it.project_id)}
+      <div onClick={() => onOpenProject(it.project_id, it.id)}
         style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 10px', borderRadius:9,
           border:'1px solid #F0F0F3', marginBottom:4, cursor:'pointer', opacity: isDone ? 0.55 : 1,
           borderLeft:`4px solid ${it.project_color || ACCENT}`,
@@ -3599,6 +4142,135 @@ function FocusQueue({ onOpenProject, projects = [] }) {
   );
 }
 
+// ── TaskDetailModal ───────────────────────────────────────────────────────────
+// The creator (or an admin) can edit title/due date/assignee and delete. Anyone else who can
+// see the task (i.e. the assignee) gets a read-only view — they can still mark it complete,
+// but every other field is locked, matching the server-side permission split in tasks.js.
+function TaskDetailModal({ task, currentUserId, isAdmin, users, onClose, onSaved }) {
+  const isOwner = isAdmin || task.created_by === currentUserId;
+  const [form, setForm] = useState({
+    title: task.title, due_date: task.due_date?.slice(0,10) || '', assigned_to: task.assigned_to || '',
+  });
+  const [completed, setCompleted] = useState(task.completed);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const toggleComplete = async () => {
+    setSaving(true);
+    try {
+      await api.put(`/tasks/${task.id}`, { completed: !completed });
+      setCompleted(v => !v);
+      onSaved();
+    } finally { setSaving(false); }
+  };
+
+  const saveDetails = async () => {
+    if (!form.title.trim()) { setError('Title is required'); return; }
+    setSaving(true); setError('');
+    try {
+      await api.put(`/tasks/${task.id}`, { title: form.title.trim(), due_date: form.due_date, assigned_to: form.assigned_to });
+      onSaved();
+    } catch (err) { setError(err.response?.data?.error || 'Failed to save'); }
+    finally { setSaving(false); }
+  };
+
+  const del = async () => {
+    if (!window.confirm('Delete this task?')) return;
+    setSaving(true);
+    try { await api.delete(`/tasks/${task.id}`); onSaved(); }
+    finally { setSaving(false); }
+  };
+
+  const inp = { width:'100%', height:38, padding:'0 11px', border:'1px solid #E5E5EA', borderRadius:9, fontSize:13.5, background:'#FAFAFB', outline:'none', boxSizing:'border-box' };
+  const lbl = { display:'block', fontSize:11.5, fontWeight:700, color:'#6B6B76', textTransform:'uppercase', letterSpacing:'0.04em', marginBottom:5 };
+  const viewRow = (label, value) => (
+    <div>
+      <label style={lbl}>{label}</label>
+      <div style={{ fontSize:13.5, color: value ? '#1A1A24' : '#C4C4CC', fontStyle: value ? 'normal' : 'italic' }}>{value || '—'}</div>
+    </div>
+  );
+
+  return (
+    <div style={{ position:'fixed', inset:0, zIndex:60, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
+      <div onClick={onClose} style={{ position:'absolute', inset:0, background:'rgba(20,20,30,.34)' }} />
+      <div style={{ position:'relative', width:440, background:'#fff', borderRadius:16, boxShadow:'0 24px 60px rgba(20,20,30,.24)', overflow:'hidden' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'18px 22px', borderBottom:'1px solid #EEEEF1' }}>
+          <div style={{ fontSize:16, fontWeight:700 }}>Task Details</div>
+          <button onClick={onClose} style={{ color:'#8A8A94', background:'none', border:'none', cursor:'pointer' }}><Icon name="x" size={18} /></button>
+        </div>
+
+        <div style={{ padding:'20px 22px', display:'flex', flexDirection:'column', gap:14 }}>
+          {!isOwner && (
+            <div style={{ fontSize:12, color:'#9A9AA4', background:'#F8F8FB', borderRadius:8, padding:'8px 12px' }}>
+              Assigned to you by {task.created_by_name || 'someone else'} — you can mark this complete, but only the creator or an admin can edit it.
+            </div>
+          )}
+
+          {isOwner ? (
+            <div>
+              <label style={lbl}>Title</label>
+              <input value={form.title} onChange={e => set('title', e.target.value)} style={inp} />
+            </div>
+          ) : viewRow('Title', task.title)}
+
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+            {isOwner ? (
+              <div>
+                <label style={lbl}>Due date</label>
+                <input type="date" value={form.due_date} onChange={e => set('due_date', e.target.value)} style={inp} />
+              </div>
+            ) : viewRow('Due date', task.due_date ? new Date(task.due_date).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : null)}
+
+            {isOwner && users?.length > 0 ? (
+              <div>
+                <label style={lbl}>Assigned to</label>
+                <select value={form.assigned_to} onChange={e => set('assigned_to', e.target.value)} style={{ ...inp, cursor:'pointer' }}>
+                  {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                </select>
+              </div>
+            ) : viewRow('Assigned to', task.assigned_name)}
+          </div>
+
+          {isOwner && viewRow('Created by', task.created_by_name)}
+          {task.contact_name && viewRow('Related contact', task.contact_name)}
+
+          <div style={{ display:'flex', alignItems:'center', gap:10, paddingTop:4 }}>
+            <button onClick={toggleComplete} disabled={saving}
+              style={{ display:'flex', alignItems:'center', gap:8, height:38, padding:'0 16px', borderRadius:9,
+                background: completed ? '#ECFDF3' : '#F2F2F5', color: completed ? '#16A34A' : '#5A5A66',
+                fontSize:13, fontWeight:700, border: completed ? '1px solid #86EFAC' : 'none', cursor:'pointer', opacity:saving?.7:1 }}>
+              <Icon name="check" size={14} />
+              {completed ? 'Completed' : 'Mark as complete'}
+            </button>
+          </div>
+
+          {error && <div style={{ background:'#FEF2F2', border:'1px solid #FECACA', borderRadius:8, padding:'8px 12px', color:'#DC2626', fontSize:13 }}>{error}</div>}
+        </div>
+
+        <div style={{ display:'flex', justifyContent:'space-between', gap:10, padding:'14px 22px', borderTop:'1px solid #EEEEF1' }}>
+          {isOwner ? (
+            <button onClick={del} disabled={saving} style={{ height:38, padding:'0 16px', borderRadius:9, background:'none', color:'#DC2626', fontSize:13.5, fontWeight:600, border:'none', cursor:'pointer' }}>
+              Delete task
+            </button>
+          ) : <span />}
+          <div style={{ display:'flex', gap:10 }}>
+            <button onClick={onClose} style={{ height:38, padding:'0 16px', borderRadius:9, background:'#F2F2F5', color:'#5A5A66', fontSize:13.5, fontWeight:600, border:'none', cursor:'pointer' }}>
+              {isOwner ? 'Cancel' : 'Close'}
+            </button>
+            {isOwner && (
+              <button onClick={saveDetails} disabled={saving}
+                style={{ height:38, padding:'0 20px', borderRadius:9, background:ACCENT, color:'#fff', fontSize:13.5, fontWeight:700, border:'none', cursor:'pointer', opacity:saving?.7:1 }}>
+                {saving ? 'Saving…' : 'Save changes'}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── QuickAddTaskModal (from all-projects view) ────────────────────────────────
 function QuickAddTaskModal({ projects, users, onClose, onSaved }) {
   const activeProjects = projects.filter(p => p.status === 'active');
@@ -3683,7 +4355,7 @@ function QuickAddTaskModal({ projects, users, onClose, onSaved }) {
 }
 
 // ── GlobalQuadrantView ────────────────────────────────────────────────────────
-function GlobalQuadrantView({ currentUserId, onViewModeChange, onOpenProject }) {
+function GlobalQuadrantView({ currentUserId, onViewModeChange, onOpenProject, canSeeTeamTasks }) {
   const [items,          setItems]          = useState([]);
   const [loading,        setLoading]        = useState(true);
   const [myOnly,         setMyOnly]         = useState(false);
@@ -3700,7 +4372,7 @@ function GlobalQuadrantView({ currentUserId, onViewModeChange, onOpenProject }) 
   const classified  = displayed.filter(it => it.importance !== null && it.urgency !== null);
   const triage      = displayed.filter(it => it.importance === null || it.urgency === null);
   const dropItems   = classified.filter(it => it.importance === 0 && it.urgency === 0);
-  const getQuadrant = (imp, urg) => classified.filter(it => it.importance === imp && it.urgency === urg);
+  const getQuadrant = (imp, urg) => classified.filter(it => iuBucket(it.importance) === imp && iuBucket(it.urgency) === urg);
 
   const updateItem = async (projectId, itemId, patch) => {
     await api.put(`/projects/${projectId}/items/${itemId}`, patch);
@@ -3717,6 +4389,7 @@ function GlobalQuadrantView({ currentUserId, onViewModeChange, onOpenProject }) 
     { m:'grid',     icon:'grid',    title:'Grid view' },
     { m:'split',    icon:'sidebar', title:'Split view' },
     { m:'quadrant', icon:'target',  title:'Quadrant view' },
+    ...(canSeeTeamTasks ? [{ m:'team', icon:'users', title:'Team tasks' }] : []),
   ];
 
   const QCell = ({ imp, urg, meta }) => {
@@ -3757,6 +4430,7 @@ function GlobalQuadrantView({ currentUserId, onViewModeChange, onOpenProject }) 
                   overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', flex:1 }}>
                   {it.project_title}
                 </span>
+                <MedFlag importance={it.importance} urgency={it.urgency}/>
                 {it.due_date && <DuePill iso={it.due_date}/>}
               </div>
               <div style={{ fontSize:11.5, fontWeight:600, color:'#19191F', lineHeight:1.25,
@@ -3901,9 +4575,83 @@ function GlobalQuadrantView({ currentUserId, onViewModeChange, onOpenProject }) 
   );
 }
 
+// ── TeamTasksView — cross-project items assigned to others, admin/manager only ────
+function TeamTasksView({ onViewModeChange, onOpenProject }) {
+  const [items,   setItems]   = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = () => {
+    setLoading(true);
+    api.get('/projects/team-items').then(r => { setItems(r.data); setLoading(false); })
+      .catch(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, []);
+
+  const viewBtns = [
+    { m:'grid',     icon:'grid',    title:'Grid view' },
+    { m:'split',    icon:'sidebar', title:'Split view' },
+    { m:'quadrant', icon:'target',  title:'Quadrant view' },
+    { m:'team',     icon:'users',   title:'Team tasks' },
+  ];
+
+  return (
+    <div>
+      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:22, flexWrap:'wrap' }}>
+        <div style={{ fontSize:17, fontWeight:800, color:'#19191F', flex:1 }}>Team Tasks · across all projects</div>
+        <button onClick={load} title="Refresh"
+          style={{ width:34, height:34, borderRadius:8, border:'1.5px solid #E5E5EA', background:'#FAFAFB',
+            color:'#6B6B76', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer' }}>
+          <Icon name="rotate" size={14}/>
+        </button>
+        <div style={{ display:'flex', gap:4 }}>
+          {viewBtns.map(({ m, icon, title }) => (
+            <button key={m} onClick={() => onViewModeChange(m)} title={title}
+              style={{ width:34, height:34, borderRadius:8,
+                border:`1.5px solid ${m === 'team' ? ACCENT : '#E5E5EA'}`,
+                background: m === 'team' ? `${ACCENT}18` : '#FAFAFB',
+                color: m === 'team' ? ACCENT : '#6B6B76',
+                display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer' }}>
+              <Icon name={icon} size={15}/>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign:'center', padding:60, color:'#9A9AA4', fontSize:13 }}>Loading…</div>
+      ) : (
+        <GroupedByEmployee
+          items={items}
+          getEmployeeId={it => it.assignee_id}
+          getEmployeeName={it => it.assignee_name}
+          getEmployeeColor={it => it.assignee_color}
+          Avatar={Avatar}
+          emptyMessage="No open items assigned across projects."
+          renderItem={it => (
+            <div key={it.id} onClick={() => onOpenProject?.(it.project_id)}
+              style={{ display:'flex', alignItems:'center', gap:10, background:'#fff', borderRadius:10,
+                padding:'10px 12px', border:'1px solid #EEEEF1', marginBottom:6, cursor:'pointer' }}
+              onMouseEnter={e => e.currentTarget.style.borderColor='#CCCCD8'}
+              onMouseLeave={e => e.currentTarget.style.borderColor='#EEEEF1'}>
+              <span style={{ width:7, height:7, borderRadius:'50%', background: it.project_color || ACCENT, flexShrink:0 }}/>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:13, fontWeight:600, color:'#19191F', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{it.title}</div>
+                <div style={{ fontSize:11.5, color:'#9A9AA4', marginTop:1 }}>{it.project_title}</div>
+              </div>
+              <SectionTypeBadge type={it.section_type}/>
+              <MedFlag importance={it.importance} urgency={it.urgency}/>
+              {it.due_date && <DuePill iso={it.due_date}/>}
+            </div>
+          )}
+        />
+      )}
+    </div>
+  );
+}
+
 // ── ProjectsView ──────────────────────────────────────────────────────────────
 function ProjectsView({ projects, onSelect, onProjectsChange, currentUserId, isAdmin, contacts, deals, users,
-  viewMode = 'grid', onViewModeChange, selectedProjectId, onCollapseList }) {
+  viewMode = 'grid', onViewModeChange, selectedProjectId, onCollapseList, canSeeTeamTasks }) {
   const [showNew,        setShowNew]        = useState(false);
   const [showReview,     setShowReview]     = useState(false);
   const [showAddTask,    setShowAddTask]    = useState(false);
@@ -4113,7 +4861,8 @@ function ProjectsView({ projects, onSelect, onProjectsChange, currentUserId, isA
         <div style={{ flex:1 }}/>
         {/* View mode toggles */}
         <div style={{ display:'flex', gap:4 }}>
-          {[{ m:'grid', icon:'grid', title:'Grid view' }, { m:'split', icon:'sidebar', title:'Split view' }, { m:'quadrant', icon:'target', title:'Quadrant view' }].map(({ m, icon, title }) => (
+          {[{ m:'grid', icon:'grid', title:'Grid view' }, { m:'split', icon:'sidebar', title:'Split view' }, { m:'quadrant', icon:'target', title:'Quadrant view' },
+            ...(canSeeTeamTasks ? [{ m:'team', icon:'users', title:'Team tasks' }] : [])].map(({ m, icon, title }) => (
             <button key={m} onClick={() => onViewModeChange(m)} title={title}
               style={{ width:34, height:34, borderRadius:8, border:`1.5px solid ${viewMode === m ? ACCENT : '#E5E5EA'}`,
                 background: viewMode === m ? `${ACCENT}18` : '#FAFAFB', color: viewMode === m ? ACCENT : '#6B6B76',
@@ -4225,12 +4974,55 @@ const USER_COLORS = ['#5B5BD6','#2563EB','#16A34A','#D97706','#DC2626','#7C3AED'
 const DEFAULT_MODULE_ACCESS = { crm: true, projects: true, hr: true };
 const MODULE_LABELS = { crm: 'CRM', projects: 'Projects', hr: 'HR' };
 
+const CRM_ROLE_PERMS = {
+  rep: [
+    'Sees only their own contacts, deals, and pipeline',
+    "Other reps' deal values are hidden from them",
+    'No access to the Team or Users management views',
+  ],
+  admin: [
+    'Sees all contacts, deals, and unmasked deal values',
+    'Access to the Team and Users management views',
+    'Full access to every module, regardless of the Module Access toggles below',
+    'Automatically treated as Company Admin as well (see Company Role)',
+  ],
+};
+
+const COMPANY_ROLE_PERMS = {
+  '':         ['No HR-module permissions — this person has no HR role'],
+  employee:   ['View own leave balance, payslips, and documents assigned to them', 'Apply for and revoke their own leave'],
+  manager:    ["Everything an Employee can do, plus:", 'Approve or reject leave requests for their direct reports', "View direct reports' attendance", 'See the "Team Tasks" view — open project tasks assigned to their direct reports'],
+  hr_admin:   ['Everything a Manager can do, plus:', 'Manage leave types and balances for all employees', 'Upload and manage company & employee documents', 'Access payroll administration'],
+};
+
+function RolePermissionsCollapsible({ items }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginTop:5 }}>
+      <button type="button" onClick={() => setOpen(o => !o)}
+        style={{ display:'flex', alignItems:'center', gap:4, background:'none', border:'none', cursor:'pointer',
+          color:'#8A8A94', fontSize:11, fontWeight:600, padding:0 }}>
+        <span style={{ display:'flex', transform: open ? 'rotate(90deg)' : 'none', transition:'transform .12s' }}>
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/></svg>
+        </span>
+        What does this role do?
+      </button>
+      {open && (
+        <ul style={{ margin:'5px 0 0', paddingLeft:15, fontSize:11, color:'#8A8A94', lineHeight:1.55 }}>
+          {items.map((line, i) => <li key={i}>{line}</li>)}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function UserModal({ editUser, onClose, onSaved }) {
   const isEdit = !!editUser;
   const [form, setForm] = useState({
     name:    editUser?.name    || '',
     email:   editUser?.email   || '',
     password: '',
+    confirmPassword: '',
     role:    editUser?.role    || 'rep',
     hr_role: editUser ? (editUser.hr_role || '') : 'employee',
     color:   editUser?.color   || '#5B5BD6',
@@ -4242,11 +5034,14 @@ function UserModal({ editUser, onClose, onSaved }) {
   const [error, setError]   = useState('');
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const setRole = (v) => setForm(f => ({ ...f, role: v, hr_role: v === 'admin' ? '' : (f.hr_role || 'employee') }));
   const toggleModule = m => setModuleAccess(prev => ({ ...prev, [m]: !prev[m] }));
 
   const save = async () => {
     if (!form.name.trim() || !form.email.trim()) { setError('Name and email are required'); return; }
     if (!isEdit && !form.password) { setError('Password is required for new users'); return; }
+    if (form.password && !isValidPassword(form.password)) { setError(PASSWORD_RULE_MESSAGE); return; }
+    if (form.password && form.password !== form.confirmPassword) { setError('Passwords do not match'); return; }
     setSaving(true); setError('');
     try {
       const body = {
@@ -4299,33 +5094,45 @@ function UserModal({ editUser, onClose, onSaved }) {
             <div>
               <label style={labelStyle}>{isEdit ? 'New password' : 'Password *'}</label>
               <input type="password" value={form.password} onChange={e => set('password', e.target.value)}
-                placeholder={isEdit ? 'Leave blank to keep current' : 'Min 8 characters'}
+                placeholder={isEdit ? 'Leave blank to keep current' : '8+ chars, upper, lower, number, symbol'}
                 style={inpStyle} />
             </div>
             <div>
-              <label style={labelStyle}>Role</label>
-              <select value={form.role} onChange={e => set('role', e.target.value)}
+              <label style={labelStyle}>{isEdit ? 'Re-enter new password' : 'Re-enter password *'}</label>
+              <input type="password" value={form.confirmPassword} onChange={e => set('confirmPassword', e.target.value)}
+                placeholder="Re-enter password"
+                style={inpStyle} />
+            </div>
+          </div>
+
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
+            <div>
+              <label style={labelStyle}>CRM Role</label>
+              <select value={form.role} onChange={e => setRole(e.target.value)}
                 style={{ ...inpStyle, cursor:'pointer', appearance:'none', WebkitAppearance:'none' }}>
                 <option value="rep">Rep</option>
                 <option value="admin">Admin</option>
               </select>
+              <RolePermissionsCollapsible items={CRM_ROLE_PERMS[form.role]} />
+            </div>
+            <div>
+              <label style={labelStyle}>Company Role</label>
+              <select value={form.hr_role} onChange={e => set('hr_role', e.target.value)}
+                disabled={isAdminRole}
+                style={{ ...inpStyle, cursor: isAdminRole ? 'not-allowed' : 'pointer', appearance:'none', WebkitAppearance:'none', opacity: isAdminRole ? 0.6 : 1 }}>
+                <option value="">None</option>
+                <option value="employee">Employee</option>
+                <option value="manager">Manager</option>
+                <option value="hr_admin">HR Admin</option>
+              </select>
+              {isAdminRole && (
+                <div style={{ fontSize:11.5, color:'#8A8A94', marginTop:4 }}>
+                  Set to None automatically — CRM Admins are already treated as Company Admin.
+                </div>
+              )}
+              <RolePermissionsCollapsible items={COMPANY_ROLE_PERMS[isAdminRole ? '' : form.hr_role]} />
             </div>
           </div>
-
-          {!isAdminRole && (
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
-              <div>
-                <label style={labelStyle}>HR Role</label>
-                <select value={form.hr_role} onChange={e => set('hr_role', e.target.value)}
-                  style={{ ...inpStyle, cursor:'pointer', appearance:'none', WebkitAppearance:'none' }}>
-                  <option value="">None</option>
-                  <option value="employee">Employee</option>
-                  <option value="manager">Manager</option>
-                  <option value="hr_admin">HR Admin</option>
-                </select>
-              </div>
-            </div>
-          )}
 
           <div>
             <label style={labelStyle}>Avatar colour</label>
@@ -4401,9 +5208,10 @@ export default function CRM() {
   const { user, logout, isAdmin, refreshUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const canSeeTeamTasks = isAdmin || user.hr_role === 'manager';
 
-  const VALID_VIEWS = ['dashboard','contacts','deals','reminders','tasks','projects','project-dashboard','team','users','settings',
-    'hr-employees','hr-leaves','hr-attendance','hr-documents','hr-payroll'];
+  const VALID_VIEWS = ['dashboard','contacts','deals','reminders','my-tasks','all-tasks','projects','project-dashboard','team','users','settings',
+    'hr-employees','hr-leaves','hr-approvals','hr-leave-calendar','hr-documents','hr-manage-documents','hr-payroll','hr-payroll-admin'];
   const viewFromPath = () => {
     const p = location.pathname.replace('/', '') || 'dashboard';
     return VALID_VIEWS.includes(p) ? p : 'dashboard';
@@ -4418,6 +5226,7 @@ export default function CRM() {
   const [projectFollowups,  setProjectFollowups]  = useState([]);
   const [focusData,         setFocusData]         = useState(null);
   const [activeProjectId,    setActiveProjectId]    = useState(null);
+  const [selectedTask,       setSelectedTask]       = useState(null);
   const [projectViewMode,    setProjectViewMode]    = useState(() => localStorage.getItem('crm_project_view') || 'grid');
   const setProjectView = (m) => { setProjectViewMode(m); localStorage.setItem('crm_project_view', m); };
   const [sidebarCollapsed,   setSidebarCollapsed]   = useState(() => localStorage.getItem('crm_sidebar') === '1');
@@ -4503,9 +5312,9 @@ export default function CRM() {
   useEffect(() => {
     if (isAdmin) return;
     const userMA = user.module_access || DEFAULT_MODULE_ACCESS;
-    const crmViews = ['dashboard','contacts','deals','reminders','tasks'];
+    const crmViews = ['dashboard','contacts','deals','reminders','my-tasks','all-tasks'];
     const projectViews = ['projects','project-dashboard'];
-    const hrViews = ['hr-employees','hr-leaves','hr-attendance','hr-documents','hr-payroll'];
+    const hrViews = ['hr-employees','hr-leaves','hr-approvals','hr-leave-calendar','hr-documents','hr-manage-documents','hr-payroll','hr-payroll-admin'];
     const inCRM = crmViews.includes(view);
     const inProjects = projectViews.includes(view);
     const inHR = hrViews.includes(view);
@@ -4544,7 +5353,8 @@ export default function CRM() {
         { key:'contacts',  label:'Contacts',  icon:'users' },
         { key:'deals',     label:'Pipeline',  icon:'kanban' },
         { key:'reminders', label:'Reminders', icon:'bell', badge: overdueCount || null },
-        { key:'tasks',     label:'Tasks',     icon:'task', badge: openTaskCount || null },
+        { key:'my-tasks',  label:'My Tasks',  icon:'task', badge: openTaskCount || null },
+        ...(isAdmin ? [{ key:'all-tasks', label:'All Tasks', icon:'task' }] : []),
       ],
     }] : []),
     ...(hasModule('projects') ? [{
@@ -4561,14 +5371,31 @@ export default function CRM() {
         { key:'users', label:'Users', icon:'userplus' },
       ],
     }] : []),
+    // "My HR" — always self-scoped, kept separate from any management/approval view so an
+    // Admin/HR Admin's own leaves/documents/payroll never sit mixed in with everyone else's.
     ...(hasModule('hr') ? [{
-      group: 'HR',
+      group: 'My HR',
       items: [
-        ...(isHRManagerUser ? [{ key:'hr-employees', label:'Employees', icon:'users' }] : []),
-        { key:'hr-leaves',     label:'Leaves',     icon:'bell'     },
-        { key:'hr-attendance', label:'Attendance',  icon:'check'    },
-        { key:'hr-documents',  label:'Documents',   icon:'doc'      },
-        { key:'hr-payroll',    label:'Payroll',     icon:'briefcase'},
+        { key:'hr-leaves',    label:'My Leaves',    icon:'bell' },
+        { key:'hr-documents', label:'My Documents', icon:'doc'  },
+        { key:'hr-payroll',   label:'My Payroll',   icon:'briefcase' },
+      ],
+    }] : []),
+    // Leave Calendar is intentionally org-wide for every employee — not "personal vs.
+    // management" data, so it stands on its own rather than living in either group above.
+    ...(hasModule('hr') ? [{
+      group: 'Leave Calendar',
+      items: [
+        { key:'hr-leave-calendar', label:'Leave Calendar', icon:'calendar' },
+      ],
+    }] : []),
+    ...(hasModule('hr') && isHRManagerUser ? [{
+      group: 'HR Management',
+      items: [
+        { key:'hr-employees', label:'Employees', icon:'users' },
+        { key:'hr-approvals', label:'Approvals', icon:'check' },
+        ...(isHRAdminUser ? [{ key:'hr-manage-documents', label:'Manage Documents', icon:'doc' }] : []),
+        ...(isHRAdminUser ? [{ key:'hr-payroll-admin', label:'Payroll (Admin)', icon:'briefcase' }] : []),
       ],
     }] : []),
   ];
@@ -4664,7 +5491,8 @@ export default function CRM() {
         </div>
 
         {/* Nav */}
-        <nav style={{ display:'flex', flexDirection:'column', marginTop:22, gap: sidebarCollapsed ? 2 : 0 }}>
+        <nav style={{ display:'flex', flexDirection:'column', marginTop:22, gap: sidebarCollapsed ? 2 : 0,
+          flex:'1 1 auto', minHeight:0, overflowY:'auto', overflowX:'hidden' }}>
           {navGroups.map((group, gi) => {
             const grpCollapsed = collapsedGroups.has(group.group);
             const toggleCollapse = () => setCollapsedGroups(prev => {
@@ -4718,29 +5546,6 @@ export default function CRM() {
             );
           })}
         </nav>
-
-        <div style={{ flex:1 }}/>
-
-        {/* User area */}
-        {sidebarCollapsed ? (
-          <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:8, paddingBottom:4 }}>
-            <Avatar name={user.name} color={user.color} size={32}/>
-            <button onClick={logout} title="Sign out" style={{ color:'#B8B8C0', background:'none', border:'none', cursor:'pointer', padding:4 }}>
-              <Icon name="logout" size={15}/>
-            </button>
-          </div>
-        ) : (
-          <div style={{ display:'flex', alignItems:'center', gap:10, padding:'9px', borderRadius:11, background:'#F6F6F9' }}>
-            <Avatar name={user.name} color={user.color} size={34}/>
-            <div style={{ flex:1, minWidth:0 }}>
-              <div style={{ fontSize:13, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{user.name}</div>
-              <div style={{ fontSize:11.5, color:'#8A8A94' }}>{user.role === 'admin' ? 'Admin' : 'Rep'}</div>
-            </div>
-            <button onClick={logout} title="Sign out" style={{ color:'#B8B8C0', background:'none', border:'none', cursor:'pointer' }}>
-              <Icon name="logout" size={16}/>
-            </button>
-          </div>
-        )}
       </aside>
 
       {/* Main */}
@@ -4753,17 +5558,21 @@ export default function CRM() {
               contacts: 'Contacts',
               deals: 'Pipeline',
               reminders: 'Reminders',
-              tasks: 'Tasks',
+              'my-tasks': 'My Tasks',
+              'all-tasks': 'All Tasks',
               projects: activeProjectId ? (projects.find(p => p.id === activeProjectId)?.title || 'Project') : 'All Projects',
               'project-dashboard': 'Project Dashboard',
               team: 'Team Performance',
               users: 'User Management',
               settings: 'Settings',
               'hr-employees':  'Employees',
-              'hr-leaves':     'Leaves',
-              'hr-attendance': 'Attendance',
-              'hr-documents':  'Documents',
-              'hr-payroll':    'Payroll',
+              'hr-leaves':     'My Leaves',
+              'hr-approvals':  'Approvals',
+              'hr-leave-calendar': 'Leave Calendar',
+              'hr-documents':  'My Documents',
+              'hr-manage-documents': 'Manage Documents',
+              'hr-payroll':    'My Payroll',
+              'hr-payroll-admin': 'Payroll (Admin)',
             }[view] || ''}
           </div>
           <div style={{ flex:1 }} />
@@ -4831,7 +5640,7 @@ export default function CRM() {
                           .slice(0, 4)
                           .map(t => (
                             <div key={t.id}
-                              onClick={() => { setView('tasks'); setShowNotifs(false); }}
+                              onClick={() => { setView('my-tasks'); setShowNotifs(false); }}
                               style={{ display:'flex', alignItems:'center', gap:10, padding:'9px 16px', cursor:'pointer' }}
                               onMouseEnter={e => e.currentTarget.style.background='#F6F6F9'}
                               onMouseLeave={e => e.currentTarget.style.background='transparent'}
@@ -4886,7 +5695,7 @@ export default function CRM() {
                       style={{ flex:1, height:32, borderRadius:8, background:'#F0F0F7', color:ACCENT, fontSize:12.5, fontWeight:600 }}>
                       View reminders
                     </button>
-                    <button onClick={() => { setView('tasks'); setShowNotifs(false); }}
+                    <button onClick={() => { setView('my-tasks'); setShowNotifs(false); }}
                       style={{ flex:1, height:32, borderRadius:8, background:'#F0F0F7', color:ACCENT, fontSize:12.5, fontWeight:600 }}>
                       View tasks
                     </button>
@@ -4927,9 +5736,11 @@ export default function CRM() {
               background: view === 'settings' ? `${ACCENT}14` : '#F6F6F9', color: view === 'settings' ? ACCENT : '#6B6B76', border:'none', cursor:'pointer', flexShrink:0 }}>
             <Icon name="settings" size={16} />
           </button>
-          <div style={{ display:'flex', alignItems:'center', gap:7, padding:'4px 11px 4px 5px', borderRadius:9, background:'#F6F6F9', flexShrink:0 }}>
-            <Avatar name={user.name} color={user.color} size={27} />
-            <span style={{ fontSize:12.5, fontWeight:600, maxWidth:110, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', color:'#3A3A44' }}>{user.name}</span>
+          <div style={{ display:'flex', alignItems:'center', gap:7, padding:'4px 5px', borderRadius:9, background:'#F6F6F9', flexShrink:0 }}>
+            <Avatar name={user.name} color={user.color} photoUrl={user.photo_url} size={27} />
+            <button onClick={logout} title="Sign out" style={{ width:27, height:27, display:'flex', alignItems:'center', justifyContent:'center', color:'#B8B8C0', background:'none', border:'none', cursor:'pointer' }}>
+              <Icon name="logout" size={15}/>
+            </button>
           </div>
         </header>
 
@@ -5116,51 +5927,97 @@ export default function CRM() {
             </div>
           )}
 
-          {/* Tasks */}
-          {view === 'tasks' && (
+          {/* Tasks — My Tasks is always self-scoped; All Tasks (admin-only) shows everyone's, grouped by assignee */}
+          {(view === 'my-tasks' || view === 'all-tasks') && (() => {
+            const visibleTasks = view === 'my-tasks'
+              ? tasks.filter(t => t.assigned_to === user.id || t.created_by === user.id)
+              : tasks;
+
+            const renderTaskRow = t => {
+              const isOwner = isAdmin || t.created_by === user.id;
+              return (
+                <div key={t.id} onClick={() => setSelectedTask(t)}
+                  style={{ display:'flex', alignItems:'center', gap:13, padding:'13px 16px', borderBottom:'1px solid #F2F2F5', opacity:t.completed?0.6:1, cursor:'pointer' }}>
+                  <button onClick={async (e) => { e.stopPropagation(); await api.put(`/tasks/${t.id}`, { completed: !t.completed }); loadTasks(); }}
+                    style={{ width:22, height:22, borderRadius:6, border:'2px solid', borderColor: t.completed?'#16A34A':'#D1D1D8', background: t.completed?'#16A34A':'transparent', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer' }}>
+                    {t.completed && <Icon name="check" size={12} color="#fff" />}
+                  </button>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:13.5, fontWeight:500, textDecoration: t.completed?'line-through':'none' }}>{t.title}</div>
+                    <div style={{ fontSize:12, color:'#8A8A94', marginTop:2 }}>
+                      {t.contact_name && <span style={{ marginRight:8 }}>re: {t.contact_name}</span>}
+                      {view === 'my-tasks' && t.assigned_name && <span>Assigned to {t.assigned_name}</span>}
+                    </div>
+                  </div>
+                  {t.due_date && <DuePill iso={t.due_date} />}
+                  {isOwner && (
+                    <button onClick={async (e) => { e.stopPropagation(); await api.delete(`/tasks/${t.id}`); loadTasks(); }}
+                      style={{ color:'#C4C4CC', background:'none', border:'none', cursor:'pointer', padding:'4px' }}>
+                      <Icon name="trash" size={14}/>
+                    </button>
+                  )}
+                </div>
+              );
+            };
+
+            const openCompletedSections = list => [
+              { label:'Open', items: list.filter(t=>!t.completed) },
+              { label:'Completed', items: list.filter(t=>t.completed) },
+            ].filter(g=>g.items.length>0).map(g => (
+              <div key={g.label} style={{ marginBottom:18 }}>
+                <div style={{ fontSize:13, fontWeight:700, color:'#5A5A66', marginBottom:8 }}>{g.label} · {g.items.length}</div>
+                <div style={{ background:'#fff', border:'1px solid #ECECEF', borderRadius:14, overflow:'hidden', boxShadow:'0 1px 2px rgba(16,16,30,0.04)' }}>
+                  {g.items.map(renderTaskRow)}
+                </div>
+              </div>
+            ));
+
+            return (
             <div style={{ maxWidth:720 }}>
               <div style={{ fontSize:13, color:'#7E7E88', marginBottom:14 }}>
-                {tasks.filter(t=>!t.completed).length} open · {tasks.filter(t=>t.completed).length} completed
+                {visibleTasks.filter(t=>!t.completed).length} open · {visibleTasks.filter(t=>t.completed).length} completed
               </div>
-              {tasks.length === 0 ? (
-                <div style={{ background:'#fff', border:'1px solid #ECECEF', borderRadius:14, padding:48, textAlign:'center', color:'#9A9AA4', fontSize:14 }}>No tasks yet.</div>
-              ) : [
-                { label:'Open', items: tasks.filter(t=>!t.completed) },
-                { label:'Completed', items: tasks.filter(t=>t.completed) },
-              ].filter(g=>g.items.length>0).map(g => (
-                <div key={g.label} style={{ marginBottom:18 }}>
-                  <div style={{ fontSize:13, fontWeight:700, color:'#5A5A66', marginBottom:8 }}>{g.label} · {g.items.length}</div>
-                  <div style={{ background:'#fff', border:'1px solid #ECECEF', borderRadius:14, overflow:'hidden', boxShadow:'0 1px 2px rgba(16,16,30,0.04)' }}>
-                    {g.items.map(t => (
-                      <div key={t.id} style={{ display:'flex', alignItems:'center', gap:13, padding:'13px 16px', borderBottom:'1px solid #F2F2F5', opacity:t.completed?0.6:1 }}>
-                        <button onClick={async () => { await api.put(`/tasks/${t.id}`, { completed: !t.completed }); loadTasks(); }}
-                          style={{ width:22, height:22, borderRadius:6, border:'2px solid', borderColor: t.completed?'#16A34A':'#D1D1D8', background: t.completed?'#16A34A':'transparent', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer' }}>
-                          {t.completed && <Icon name="check" size={12} color="#fff" />}
-                        </button>
-                        <div style={{ flex:1, minWidth:0 }}>
-                          <div style={{ fontSize:13.5, fontWeight:500, textDecoration: t.completed?'line-through':'none' }}>{t.title}</div>
-                          <div style={{ fontSize:12, color:'#8A8A94', marginTop:2 }}>
-                            {t.contact_name && <span style={{ marginRight:8 }}>re: {t.contact_name}</span>}
-                            {t.assigned_name && <span>Assigned to {t.assigned_name}</span>}
-                          </div>
-                        </div>
-                        {t.due_date && <DuePill iso={t.due_date} />}
-                        <button onClick={async () => { await api.delete(`/tasks/${t.id}`); loadTasks(); }}
-                          style={{ color:'#C4C4CC', background:'none', border:'none', cursor:'pointer', padding:'4px' }}>
-                          <Icon name="trash" size={14}/>
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
+              {view === 'all-tasks' ? (
+                <GroupedByEmployee
+                  items={visibleTasks}
+                  getEmployeeId={t => t.assigned_to}
+                  getEmployeeName={t => t.assigned_name}
+                  getEmployeeColor={t => t.assigned_color}
+                  Avatar={Avatar}
+                  emptyMessage="No tasks yet."
+                  renderGroupHeaderExtra={items => (
+                    <span style={{ fontSize:11.5, color:'#B0B0BC' }}>{items.filter(t=>!t.completed).length} open</span>
+                  )}
+                  renderGroupBody={openCompletedSections}
+                />
+              ) : (
+                visibleTasks.length === 0 ? (
+                  <div style={{ background:'#fff', border:'1px solid #ECECEF', borderRadius:14, padding:48, textAlign:'center', color:'#9A9AA4', fontSize:14 }}>No tasks yet.</div>
+                ) : openCompletedSections(visibleTasks)
+              )}
             </div>
+            );
+          })()}
+
+          {selectedTask && (
+            <TaskDetailModal
+              task={selectedTask}
+              currentUserId={user.id}
+              isAdmin={isAdmin}
+              users={users}
+              onClose={() => setSelectedTask(null)}
+              onSaved={() => { loadTasks(); setSelectedTask(null); }}
+            />
           )}
 
           {/* Project Dashboard */}
           {view === 'project-dashboard' && (
             <ProjectsDashboard
               projects={projects}
+              users={users}
+              contacts={contacts}
+              currentUserId={user.id}
+              isAdmin={isAdmin}
               onSelect={(id) => { setView('projects'); setActiveProjectId(id); }}
             />
           )}
@@ -5170,6 +6027,12 @@ export default function CRM() {
             projectViewMode === 'quadrant' && !activeProjectId ? (
               <GlobalQuadrantView
                 currentUserId={user.id}
+                onViewModeChange={setProjectView}
+                onOpenProject={setActiveProjectId}
+                canSeeTeamTasks={canSeeTeamTasks}
+              />
+            ) : projectViewMode === 'team' && canSeeTeamTasks && !activeProjectId ? (
+              <TeamTasksView
                 onViewModeChange={setProjectView}
                 onOpenProject={setActiveProjectId}
               />
@@ -5201,6 +6064,7 @@ export default function CRM() {
                       users={users}
                       viewMode="split"
                       onViewModeChange={setProjectView}
+                      canSeeTeamTasks={canSeeTeamTasks}
                       selectedProjectId={activeProjectId}
                       onCollapseList={() => setProjListCollapsed(true)}
                     />
@@ -5268,6 +6132,7 @@ export default function CRM() {
                     users={users}
                     viewMode="grid"
                     onViewModeChange={setProjectView}
+                    canSeeTeamTasks={canSeeTeamTasks}
                     selectedProjectId={activeProjectId}
                   />
             )

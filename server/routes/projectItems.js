@@ -5,18 +5,28 @@ const verifyJWT = require('../middleware/auth');
 const VALID_TYPES = ['task','context','deliverable','followup'];
 const DEFAULT_STATUS = { task:'open', context:'open', followup:'open', deliverable:'draft' };
 
-async function checkAccess(projectId, userId) {
+// Project owners/creators get full access. Everyone else gets read-only access if they're
+// assigned at least one item in the project — this is what lets /ppc and /focus (which
+// surface items by assignee_id regardless of project ownership) actually be opened afterward.
+async function checkAccess(projectId, userId, { readOnly = false } = {}) {
   const { rows } = await pool.query('SELECT * FROM projects WHERE id=$1', [projectId]);
   if (!rows[0]) return { status: 404, error: 'Not found' };
-  if (rows[0].owner_id !== userId && rows[0].created_by !== userId)
-    return { status: 403, error: 'Forbidden' };
-  return { project: rows[0] };
+  const project = rows[0];
+  if (project.owner_id === userId || project.created_by === userId) return { project };
+  if (readOnly) {
+    const { rows: assigned } = await pool.query(
+      'SELECT 1 FROM project_items WHERE project_id=$1 AND assignee_id=$2 LIMIT 1',
+      [projectId, userId]
+    );
+    if (assigned[0]) return { project };
+  }
+  return { status: 403, error: 'Forbidden' };
 }
 
 // GET /api/projects/:projectId/items
 router.get('/', verifyJWT, async (req, res) => {
   try {
-    const result = await checkAccess(req.params.projectId, req.user.id);
+    const result = await checkAccess(req.params.projectId, req.user.id, { readOnly: true });
     if (result.status) return res.status(result.status).json({ error: result.error });
 
     const conditions = ['pi.project_id=$1'];
@@ -40,7 +50,8 @@ router.get('/', verifyJWT, async (req, res) => {
        ORDER BY pi.created_at ASC`,
       vals
     );
-    res.json(rows);
+    // Let the client tell full-edit access apart from view-only (assignee-in-someone-else's-project) access.
+    res.json(rows.map(r => ({ ...r, project_owner_id: result.project.owner_id, project_created_by: result.project.created_by })));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Server error' }); }
 });
 
@@ -96,9 +107,12 @@ router.post('/', verifyJWT, async (req, res) => {
 });
 
 // PUT /api/projects/:projectId/items/:id
+// Only the project owner/creator may edit item details (title/body/assignee/due date/etc).
+// An assignee who isn't also the owner may only update `status` — the progress-marking
+// field — mirroring the same permission split applied to standalone tasks.
 router.put('/:id', verifyJWT, async (req, res) => {
   try {
-    const result = await checkAccess(req.params.projectId, req.user.id);
+    const result = await checkAccess(req.params.projectId, req.user.id, { readOnly: true });
     if (result.status) return res.status(result.status).json({ error: result.error });
 
     const { rows: ex } = await pool.query(
@@ -108,40 +122,66 @@ router.put('/:id', verifyJWT, async (req, res) => {
     if (!ex[0]) return res.status(404).json({ error: 'Not found' });
 
     const item = ex[0];
-    const allowed = ['title','body','status','assignee_id','due_date','milestone_id','doc_type','sync_to_crm','followup_contact_id','recurrence','committed',
-                     'effort_size','effort_hours','waiting_on','waiting_contact_id','context_tag'];
+    const isOwner = result.project.owner_id === req.user.id || result.project.created_by === req.user.id;
+    const isAssignee = item.assignee_id === req.user.id;
+    if (!isOwner && !isAssignee) return res.status(403).json({ error: 'Forbidden' });
+
+    const detailFields = ['title','body','assignee_id','due_date','milestone_id','doc_type','sync_to_crm','followup_contact_id','recurrence','committed',
+                           'effort_size','effort_hours','waiting_on','waiting_contact_id','context_tag','checklist','importance','urgency'];
+    const requestedDetailChange = detailFields.some(k => req.body[k] !== undefined);
+    if (requestedDetailChange && !isOwner) {
+      return res.status(403).json({ error: 'Only the project owner can edit item details' });
+    }
+
     const fields = []; const vals = []; let i = 1;
 
-    for (const k of allowed) {
-      if (req.body[k] !== undefined) {
+    if (isOwner) {
+      for (const k of detailFields) {
+        if (k === 'checklist' || k === 'importance' || k === 'urgency' || req.body[k] === undefined) continue;
         fields.push(`${k}=$${i++}`);
         vals.push(req.body[k] === '' ? null : req.body[k]);
       }
-    }
 
-    // checklist: JSONB array — must stringify (pg would render a JS array as a PG array literal)
-    if (req.body.checklist !== undefined) {
-      fields.push(`checklist=$${i++}`);
-      vals.push(Array.isArray(req.body.checklist) ? JSON.stringify(req.body.checklist) : null);
-    }
-
-    // Auto-stamp committed_at when commitment is first set
-    if (req.body.committed === true && !item.committed) {
-      fields.push(`committed_at=NOW()`);
-    }
-    if (req.body.committed === false) {
-      fields.push(`committed_at=NULL`);
-    }
-
-    // waiting_since: stamp when waiting_on goes empty→set; clear (with contact) when cleared
-    if (req.body.waiting_on !== undefined) {
-      const nowWaiting = !!req.body.waiting_on;
-      if (nowWaiting && !item.waiting_on) {
-        fields.push(`waiting_since=CURRENT_DATE`);
-      } else if (!nowWaiting) {
-        fields.push(`waiting_since=NULL`);
-        if (req.body.waiting_contact_id === undefined) fields.push(`waiting_contact_id=NULL`);
+      // checklist: JSONB array — must stringify (pg would render a JS array as a PG array literal)
+      if (req.body.checklist !== undefined) {
+        fields.push(`checklist=$${i++}`);
+        vals.push(Array.isArray(req.body.checklist) ? JSON.stringify(req.body.checklist) : null);
       }
+
+      // Auto-stamp committed_at when commitment is first set
+      if (req.body.committed === true && !item.committed) {
+        fields.push(`committed_at=NOW()`);
+      }
+      if (req.body.committed === false) {
+        fields.push(`committed_at=NULL`);
+      }
+
+      // waiting_since: stamp when waiting_on goes empty→set; clear (with contact) when cleared
+      if (req.body.waiting_on !== undefined) {
+        const nowWaiting = !!req.body.waiting_on;
+        if (nowWaiting && !item.waiting_on) {
+          fields.push(`waiting_since=CURRENT_DATE`);
+        } else if (!nowWaiting) {
+          fields.push(`waiting_since=NULL`);
+          if (req.body.waiting_contact_id === undefined) fields.push(`waiting_contact_id=NULL`);
+        }
+      }
+
+      // importance and urgency: allow explicit null to unclassify; skip if not sent
+      for (const k of ['importance','urgency']) {
+        if (req.body[k] !== undefined) {
+          if (item.section_type === 'context') {
+            fields.push(`${k}=$${i++}`); vals.push(null);
+          } else {
+            fields.push(`${k}=$${i++}`); vals.push(req.body[k]);
+          }
+        }
+      }
+    }
+
+    if (req.body.status !== undefined) {
+      fields.push(`status=$${i++}`);
+      vals.push(req.body.status === '' ? null : req.body.status);
     }
 
     // Stamp completed_at when transitioning into a done state; clear when reopened
@@ -153,17 +193,6 @@ router.put('/:id', verifyJWT, async (req, res) => {
       fields.push(`completed_at=NOW()`);
     } else if (!wasOpen && becomingOpen) {
       fields.push(`completed_at=NULL`);
-    }
-
-    // importance and urgency: allow explicit null to unclassify; skip if not sent
-    for (const k of ['importance','urgency']) {
-      if (req.body[k] !== undefined) {
-        if (item.section_type === 'context') {
-          fields.push(`${k}=$${i++}`); vals.push(null);
-        } else {
-          fields.push(`${k}=$${i++}`); vals.push(req.body[k]);
-        }
-      }
     }
 
     if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });

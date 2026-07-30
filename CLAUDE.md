@@ -102,7 +102,7 @@ All monetary values stored as **INR integers**. Currency display conversion is c
 - `custom_field_defs` — admin-defined extra fields on contacts; `field_type` in `('text','number','date','select')`
 - `projects` — linked optionally to one contact and/or one deal; `status` in `('active','completed','archived')`; `retro` (JSONB) for retrospective data
 - `project_milestones` — ordered by `position`; items' `milestone_id` NULLs on delete
-- `project_items` — `section_type` in `('task','context','deliverable','followup')`; `importance`/`urgency` (1=high, 0=low, NULL=unclassified); `committed` BOOLEAN for weekly PPC tracking; followup items have `followup_contact_id`, `recurrence`, `sync_to_crm`
+- `project_items` — `section_type` in `('task','context','deliverable','followup')`; `importance`/`urgency` (0=low, 1=medium, 2=high, NULL=unclassified — the Eisenhower quadrant view buckets medium with high via `iuBucket()` in CRM.jsx, since the grid itself stays a forced binary); `committed` BOOLEAN for weekly PPC tracking; followup items have `followup_contact_id`, `recurrence`, `sync_to_crm`
 
 **Migrations** run automatically on every server start — never edit existing migration files; add a new numbered file instead.
 

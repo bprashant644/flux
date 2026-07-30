@@ -12,7 +12,7 @@ router.post('/login', async (req, res) => {
   }
   try {
     const { rows } = await pool.query(
-      'SELECT id, name, email, password_hash, role, color, hr_role, module_access FROM users WHERE email = $1',
+      'SELECT id, name, email, password_hash, role, color, photo_url, two_factor_enabled, hr_role, module_access FROM users WHERE email = $1',
       [email.toLowerCase().trim()]
     );
     const user = rows[0];
@@ -24,7 +24,7 @@ router.post('/login', async (req, res) => {
       jwtSecret,
       { expiresIn: '8h' }
     );
-    res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role, color: user.color, hr_role: user.hr_role, module_access: user.module_access } });
+    res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role, color: user.color, photo_url: user.photo_url, two_factor_enabled: user.two_factor_enabled, hr_role: user.hr_role, module_access: user.module_access } });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -34,7 +34,7 @@ router.post('/login', async (req, res) => {
 router.get('/me', verifyJWT, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      'SELECT id, name, email, role, hr_role, manager_id, color, teams_webhook_url, email_digest, module_access FROM users WHERE id = $1',
+      'SELECT id, name, email, role, hr_role, manager_id, color, photo_url, two_factor_enabled, teams_webhook_url, email_digest, module_access FROM users WHERE id = $1',
       [req.user.id]
     );
     if (!rows[0]) return res.status(404).json({ error: 'User not found' });

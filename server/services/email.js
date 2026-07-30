@@ -100,4 +100,41 @@ async function sendDigest(user, contacts, items = []) {
   console.log(`[email] Digest sent to ${user.email} (${contacts.length} contacts, ${items.length} items)`);
 }
 
-module.exports = { sendDigest };
+function buildTaskAssignedHtml(user, task, assignedByName) {
+  const dueLabel = task.due_date
+    ? new Date(task.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : null;
+  return `
+<!DOCTYPE html><html><body style="font-family:sans-serif;color:#19191f;background:#f4f4f6;margin:0;padding:24px">
+<div style="max-width:520px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
+  <div style="background:#5b5bd6;padding:22px 26px">
+    <div style="color:#fff;font-size:18px;font-weight:800">New task assigned to you</div>
+  </div>
+  <div style="padding:22px 26px">
+    <div style="font-size:15px;font-weight:700;margin-bottom:6px">${task.title}</div>
+    <div style="font-size:13px;color:#666">Assigned by ${assignedByName}${dueLabel ? ` · Due ${dueLabel}` : ''}</div>
+  </div>
+  <div style="padding:0 26px 22px">
+    <a href="${process.env.APP_URL || 'http://localhost:5173'}/my-tasks" style="background:#5b5bd6;color:#fff;padding:10px 22px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">Open My Tasks</a>
+  </div>
+  <div style="padding:0 26px 20px;color:#aaa;font-size:12px">SCC Flux · Turn off task-assignment emails in Settings</div>
+</div>
+</body></html>`;
+}
+
+async function sendTaskAssignedEmail(user, task, assignedByName) {
+  const transport = createTransport();
+  if (!transport) {
+    console.log('[email] SMTP not configured — skipping task-assigned email for', user.email);
+    return;
+  }
+  await transport.sendMail({
+    from: `"SCC Flux" <${smtp.from}>`,
+    to: user.email,
+    subject: `New task assigned: ${task.title}`,
+    html: buildTaskAssignedHtml(user, task, assignedByName),
+  });
+  console.log(`[email] Task-assigned email sent to ${user.email}`);
+}
+
+module.exports = { sendDigest, sendTaskAssignedEmail };

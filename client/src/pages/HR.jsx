@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../api';
+import GroupedByEmployee from '../components/GroupedByEmployee';
 
 const ACCENT = '#5B5BD6';
 const HR_PATHS = {
@@ -64,18 +65,18 @@ const HR_ROLE_META = {
   employee: { label:'Employee', color:'#16A34A', bg:'#ECFDF3' },
 };
 
-const ATT_META = {
-  present:  { label:'P', color:'#16A34A', bg:'#ECFDF3', full:'Present'   },
-  wfh:      { label:'W', color:'#2563EB', bg:'#EFF4FF', full:'WFH'       },
-  half_day: { label:'H', color:'#D97706', bg:'#FFFBEB', full:'Half Day'  },
-  absent:   { label:'A', color:'#DC2626', bg:'#FEF2F2', full:'Absent'    },
-  leave:    { label:'L', color:'#7C3AED', bg:'#F3F0FF', full:'On Leave'  },
-};
+const LEAVE_TYPE_COLORS = ['#7C3AED','#2563EB','#D97706','#DB2777','#059669','#DC2626','#0891B2'];
+const HOLIDAY_COLOR = { color:'#B45309', bg:'#FEF3C7' };
 
 const fmtDate = (iso) => {
   if (!iso) return '—';
   const d = new Date(iso);
   return d.toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' });
+};
+
+const todayDateStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 };
 
 const fmtMonth = (ym) => {
@@ -378,6 +379,9 @@ function EmployeeProfilePanel({ employee, currentUser, onClose, onSaved, editing
             </button>
           )}
 
+          {/* Leave Balances (HR Admin only — pro-rata override for new joinees) */}
+          {isAdmin && <LeaveBalanceEditor employeeId={employee.id} />}
+
           {/* Change Request Form */}
           {showPCR && (
             <div style={{ background:'#FAFAFB', border:'1px solid #EEEEF1', borderRadius:10, padding:'14px', marginBottom:20 }}>
@@ -424,20 +428,82 @@ function EmployeeProfilePanel({ employee, currentUser, onClose, onSaved, editing
   );
 }
 
+function LeaveBalanceEditor({ employeeId }) {
+  const [balances, setBalances] = useState([]);
+  const [edits, setEdits]       = useState({});
+  const [saving, setSaving]     = useState(null);
+  const year = new Date().getFullYear();
+
+  const load = useCallback(() => {
+    api.get(`/hr/leaves/balances?userId=${employeeId}&year=${year}`).then(r => setBalances(r.data)).catch(() => {});
+  }, [employeeId, year]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const saveOne = async (leaveTypeId) => {
+    const val = edits[leaveTypeId];
+    if (val == null || val === '') return;
+    setSaving(leaveTypeId);
+    try {
+      await api.put(`/hr/leaves/balances/${employeeId}/${leaveTypeId}?year=${year}`, { allocated_days: Number(val) });
+      setEdits(e => ({ ...e, [leaveTypeId]: undefined }));
+      load();
+    } finally { setSaving(null); }
+  };
+
+  const inp = { width:70, height:32, padding:'0 8px', border:'1px solid #E5E5EA', borderRadius:7, fontSize:13, background:'#FAFAFB', outline:'none' };
+
+  if (balances.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom:20 }}>
+      <div style={{ fontSize:13, fontWeight:700, color:'#5A5A66', textTransform:'uppercase', letterSpacing:'.05em', marginBottom:12 }}>
+        Leave Balances ({year})
+      </div>
+      <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+        {balances.map(b => (
+          <div key={b.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', background:'#FAFAFB', border:'1px solid #EEEEF1', borderRadius:9 }}>
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:13, fontWeight:600 }}>{b.name}</div>
+              <div style={{ fontSize:11.5, color:'#9A9AA4' }}>
+                {b.allocated_days} allocated
+                {b.carried_forward_days > 0 ? ` (incl. ${b.carried_forward_days} carried forward)` : ''}
+                {' · '}{b.used_days} used
+              </div>
+            </div>
+            <input type="number" min="0" step="0.5"
+              placeholder={String(b.allocated_days)}
+              value={edits[b.id] ?? ''}
+              onChange={e => setEdits(ed => ({ ...ed, [b.id]: e.target.value }))}
+              style={inp} />
+            <button onClick={() => saveOne(b.id)} disabled={saving === b.id}
+              style={{ height:32, padding:'0 12px', borderRadius:7, background:ACCENT, color:'#fff', fontSize:12, fontWeight:700, border:'none', cursor:'pointer', opacity: saving === b.id ? .7 : 1 }}>
+              {saving === b.id ? '…' : 'Set'}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Leave Management ─────────────────────────────────────────────────────────
-function LeaveManagement({ user }) {
-  const [tab, setTab]         = useState('mine');
+const LEAVE_STATUS_META = {
+  pending:  { label:'Pending',  color:'#D97706', bg:'#FFFBEB' },
+  approved: { label:'Approved', color:'#16A34A', bg:'#ECFDF3' },
+  rejected: { label:'Rejected', color:'#DC2626', bg:'#FEF2F2' },
+  cancelled:{ label:'Cancelled',color:'#6B7280', bg:'#F3F4F6' },
+};
+const LEAVE_CARD = { background:'#fff', border:'1px solid #ECECEF', borderRadius:12, padding:'14px 16px', marginBottom:10 };
+
+// ── My Leaves (self-only — everyone, including managers/HR Admin, only ever sees their own here) ──
+function MyLeavesView({ user }) {
   const [balances, setBalances] = useState([]);
   const [requests, setRequests] = useState([]);
-  const [pending, setPending]   = useState([]);
   const [types, setTypes]       = useState([]);
   const [showApply, setShowApply] = useState(false);
-  const [showNewType, setShowNewType] = useState(false);
   const [loading, setLoading]   = useState(true);
-
-  const hrAdmin  = isHRAdmin(user);
-  const hrMgr    = isHRManager(user);
-  const year     = new Date().getFullYear();
+  const year = new Date().getFullYear();
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -448,46 +514,29 @@ function LeaveManagement({ user }) {
         api.get('/hr/leaves/types'),
       ]);
       setBalances(b.data);
-      setRequests(r.data);
+      setRequests(r.data.filter(req => req.user_id === user.id));
       setTypes(t.data);
-      if (hrMgr) {
-        const p = await api.get('/hr/leaves/requests?status=pending');
-        setPending(p.data.filter(r => r.user_id !== user.id));
-      }
     } finally { setLoading(false); }
-  }, [user.id, hrMgr, year]);
+  }, [user.id, year]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  const reviewRequest = async (id, status, reason) => {
-    await api.put(`/hr/leaves/requests/${id}`, { status, rejection_reason: reason });
+  const revokeRequest = async (id) => {
+    if (!window.confirm('Revoke this leave? The days will be credited back to your balance.')) return;
+    await api.put(`/hr/leaves/requests/${id}`, { status: 'cancelled' });
     loadAll();
   };
-
-  const STATUS_META = {
-    pending:  { label:'Pending',  color:'#D97706', bg:'#FFFBEB' },
-    approved: { label:'Approved', color:'#16A34A', bg:'#ECFDF3' },
-    rejected: { label:'Rejected', color:'#DC2626', bg:'#FEF2F2' },
-    cancelled:{ label:'Cancelled',color:'#6B7280', bg:'#F3F4F6' },
-  };
-
-  const myRequests = requests.filter(r => r.user_id === user.id);
-  const historyRequests = hrMgr
-    ? requests.filter(r => r.user_id !== user.id && ['approved','rejected','cancelled'].includes(r.status))
-    : [];
-  const card = { background:'#fff', border:'1px solid #ECECEF', borderRadius:12, padding:'14px 16px', marginBottom:10 };
 
   return (
     <div>
       <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:20 }}>
-        <h2 style={{ fontSize:20, fontWeight:800, letterSpacing:'-0.02em', flex:1 }}>Leaves</h2>
+        <h2 style={{ fontSize:20, fontWeight:800, letterSpacing:'-0.02em', flex:1 }}>My Leaves</h2>
         <button onClick={() => setShowApply(true)}
           style={{ display:'flex', alignItems:'center', gap:6, height:36, padding:'0 16px', borderRadius:9, background:ACCENT, color:'#fff', fontSize:13, fontWeight:700, border:'none', cursor:'pointer' }}>
           <HRIcon name="plus" size={15} />Apply Leave
         </button>
       </div>
 
-      {/* Balance strip */}
       {balances.length > 0 && (
         <div style={{ display:'flex', gap:10, marginBottom:20, flexWrap:'wrap' }}>
           {balances.map(b => {
@@ -503,14 +552,81 @@ function LeaveManagement({ user }) {
         </div>
       )}
 
-      {/* Tabs */}
+      {loading ? <div style={{ color:'#9A9AA4', padding:24 }}>Loading…</div> : (
+        requests.length === 0
+          ? <div style={{ textAlign:'center', padding:48, color:'#9A9AA4' }}>No leave requests yet.</div>
+          : requests.map(r => {
+            const sm = LEAVE_STATUS_META[r.status] || LEAVE_STATUS_META.pending;
+            return (
+              <div key={r.id} style={LEAVE_CARD}>
+                <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:6 }}>
+                  <div style={{ flex:1, fontWeight:700, fontSize:14 }}>{r.leave_type_name}</div>
+                  <Badge label={sm.label} color={sm.color} bg={sm.bg} />
+                  {['pending','approved'].includes(r.status) && String(r.start_date).slice(0,10) >= todayDateStr() && (
+                    <button onClick={() => revokeRequest(r.id)}
+                      style={{ fontSize:12, color:'#DC2626', background:'none', border:'none', cursor:'pointer' }}>Revoke</button>
+                  )}
+                </div>
+                <div style={{ fontSize:13, color:'#6B6B76' }}>{fmtDate(r.start_date)} — {fmtDate(r.end_date)} · {r.days} day{r.days !== 1 ? 's' : ''}</div>
+                {r.reason && <div style={{ fontSize:12.5, color:'#9A9AA4', marginTop:4 }}>{r.reason}</div>}
+                {r.rejection_reason && <div style={{ fontSize:12.5, color:'#DC2626', marginTop:4 }}>Reason: {r.rejection_reason}</div>}
+              </div>
+            );
+          })
+      )}
+
+      {showApply && (
+        <ApplyLeaveModal types={types} onClose={() => setShowApply(false)} onSaved={loadAll} />
+      )}
+    </div>
+  );
+}
+
+// ── Approvals (manager+ — everyone else's leave, never the viewer's own) ──
+function LeaveApprovalsView({ user }) {
+  const [tab, setTab]         = useState('approvals');
+  const [requests, setRequests] = useState([]);
+  const [pending, setPending]   = useState([]);
+  const [types, setTypes]       = useState([]);
+  const [showNewType, setShowNewType] = useState(false);
+  const [loading, setLoading]   = useState(true);
+  const hrAdmin = isHRAdmin(user);
+
+  const loadAll = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [r, t, p] = await Promise.all([
+        api.get('/hr/leaves/requests'),
+        api.get('/hr/leaves/types'),
+        api.get('/hr/leaves/requests?status=pending'),
+      ]);
+      setRequests(r.data.filter(req => req.user_id !== user.id));
+      setTypes(t.data);
+      setPending(p.data.filter(req => req.user_id !== user.id));
+    } finally { setLoading(false); }
+  }, [user.id]);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  const reviewRequest = async (id, status, reason) => {
+    await api.put(`/hr/leaves/requests/${id}`, { status, rejection_reason: reason });
+    loadAll();
+  };
+
+  const historyRequests = requests.filter(r => ['approved','rejected','cancelled'].includes(r.status));
+
+  const TABS = [
+    { key:'approvals', label:`Pending (${pending.length})` },
+    { key:'history', label:`History (${historyRequests.length})` },
+    ...(hrAdmin ? [{ key:'types', label:'Leave Types' }] : []),
+  ];
+
+  return (
+    <div>
+      <h2 style={{ fontSize:20, fontWeight:800, letterSpacing:'-0.02em', marginBottom:20 }}>Leave Approvals</h2>
+
       <div style={{ display:'flex', gap:4, marginBottom:16, borderBottom:'1px solid #EEEEF1', paddingBottom:2 }}>
-        {[
-          { key:'mine', label:'My Requests' },
-          ...(hrMgr ? [{ key:'approvals', label:`Pending (${pending.length})` }] : []),
-          ...(hrMgr ? [{ key:'history', label:`History (${historyRequests.length})` }] : []),
-          ...(hrAdmin ? [{ key:'types', label:'Leave Types' }] : []),
-        ].map(t => (
+        {TABS.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             style={{ padding:'7px 14px', borderRadius:'8px 8px 0 0', fontSize:13, fontWeight:600, border:'none', cursor:'pointer',
               background: tab === t.key ? '#fff' : 'transparent',
@@ -523,31 +639,6 @@ function LeaveManagement({ user }) {
 
       {loading ? <div style={{ color:'#9A9AA4', padding:24 }}>Loading…</div> : (
         <>
-          {/* My Requests */}
-          {tab === 'mine' && (
-            myRequests.length === 0
-              ? <div style={{ textAlign:'center', padding:48, color:'#9A9AA4' }}>No leave requests yet.</div>
-              : myRequests.map(r => {
-                const sm = STATUS_META[r.status] || STATUS_META.pending;
-                return (
-                  <div key={r.id} style={card}>
-                    <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:6 }}>
-                      <div style={{ flex:1, fontWeight:700, fontSize:14 }}>{r.leave_type_name}</div>
-                      <Badge label={sm.label} color={sm.color} bg={sm.bg} />
-                      {r.status === 'pending' && (
-                        <button onClick={() => reviewRequest(r.id, 'cancelled')}
-                          style={{ fontSize:12, color:'#DC2626', background:'none', border:'none', cursor:'pointer' }}>Cancel</button>
-                      )}
-                    </div>
-                    <div style={{ fontSize:13, color:'#6B6B76' }}>{fmtDate(r.start_date)} — {fmtDate(r.end_date)} · {r.days} day{r.days !== 1 ? 's' : ''}</div>
-                    {r.reason && <div style={{ fontSize:12.5, color:'#9A9AA4', marginTop:4 }}>{r.reason}</div>}
-                    {r.rejection_reason && <div style={{ fontSize:12.5, color:'#DC2626', marginTop:4 }}>Reason: {r.rejection_reason}</div>}
-                  </div>
-                );
-              })
-          )}
-
-          {/* Pending Approvals */}
           {tab === 'approvals' && (
             pending.length === 0
               ? <div style={{ textAlign:'center', padding:48, color:'#9A9AA4' }}>No pending approvals.</div>
@@ -556,42 +647,40 @@ function LeaveManagement({ user }) {
               ))
           )}
 
-          {/* History — approved/rejected by HR Admin/Manager */}
-          {tab === 'history' && hrMgr && (
-            historyRequests.length === 0
-              ? <div style={{ textAlign:'center', padding:48, color:'#9A9AA4' }}>No reviewed requests yet.</div>
-              : historyRequests.map(r => {
-                  const sm = STATUS_META[r.status] || STATUS_META.pending;
-                  return (
-                    <div key={r.id} style={card}>
-                      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:6 }}>
-                        <Avatar name={r.user_name} color={r.user_color} size={28} />
-                        <div style={{ flex:1 }}>
-                          <div style={{ fontWeight:700, fontSize:13.5 }}>{r.user_name}</div>
-                          <div style={{ fontSize:12, color:'#7E7E88' }}>{r.leave_type_name} · {r.days} day{r.days !== 1 ? 's' : ''}</div>
-                        </div>
-                        <Badge label={sm.label} color={sm.color} bg={sm.bg} />
+          {tab === 'history' && (
+            <GroupedByEmployee
+              items={historyRequests}
+              getEmployeeId={r => r.user_id}
+              getEmployeeName={r => r.user_name}
+              getEmployeeColor={r => r.user_color}
+              Avatar={Avatar}
+              emptyMessage="No reviewed requests yet."
+              renderItem={r => {
+                const sm = LEAVE_STATUS_META[r.status] || LEAVE_STATUS_META.pending;
+                return (
+                  <div key={r.id} style={LEAVE_CARD}>
+                    <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:6 }}>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:12, color:'#7E7E88' }}>{r.leave_type_name} · {r.days} day{r.days !== 1 ? 's' : ''}</div>
                       </div>
-                      <div style={{ fontSize:13, color:'#6B6B76' }}>{fmtDate(r.start_date)} — {fmtDate(r.end_date)}</div>
-                      {r.reason && <div style={{ fontSize:12.5, color:'#9A9AA4', marginTop:4 }}>{r.reason}</div>}
-                      {r.rejection_reason && <div style={{ fontSize:12.5, color:'#DC2626', marginTop:4 }}>Rejection reason: {r.rejection_reason}</div>}
-                      <div style={{ fontSize:11.5, color:'#B0B0BC', marginTop:6 }}>
-                        Reviewed by {r.reviewed_by_name || '—'}{r.reviewed_at ? ` on ${fmtDate(r.reviewed_at)}` : ''}
-                      </div>
+                      <Badge label={sm.label} color={sm.color} bg={sm.bg} />
                     </div>
-                  );
-                })
+                    <div style={{ fontSize:13, color:'#6B6B76' }}>{fmtDate(r.start_date)} — {fmtDate(r.end_date)}</div>
+                    {r.reason && <div style={{ fontSize:12.5, color:'#9A9AA4', marginTop:4 }}>{r.reason}</div>}
+                    {r.rejection_reason && <div style={{ fontSize:12.5, color:'#DC2626', marginTop:4 }}>Rejection reason: {r.rejection_reason}</div>}
+                    <div style={{ fontSize:11.5, color:'#B0B0BC', marginTop:6 }}>
+                      Reviewed by {r.reviewed_by_name || '—'}{r.reviewed_at ? ` on ${fmtDate(r.reviewed_at)}` : ''}
+                    </div>
+                  </div>
+                );
+              }}
+            />
           )}
 
-          {/* Leave Types */}
           {tab === 'types' && hrAdmin && (
             <LeaveTypesAdmin types={types} onSaved={loadAll} showNew={showNewType} setShowNew={setShowNewType} />
           )}
         </>
-      )}
-
-      {showApply && (
-        <ApplyLeaveModal types={types} onClose={() => setShowApply(false)} onSaved={loadAll} />
       )}
     </div>
   );
@@ -659,6 +748,8 @@ function ApplyLeaveModal({ types, onClose, onSaved }) {
     if (!form.leave_type_id || !form.start_date || !form.end_date || !form.days) {
       setError('All fields except reason are required'); return;
     }
+    if (form.start_date < todayDateStr()) { setError('Start date cannot be in the past'); return; }
+    if (form.end_date < form.start_date) { setError('End date cannot be before start date'); return; }
     setSaving(true); setError('');
     try {
       await api.post('/hr/leaves/requests', form);
@@ -685,8 +776,8 @@ function ApplyLeaveModal({ types, onClose, onSaved }) {
             </select>
           </div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 80px', gap:10 }}>
-            <div><label style={lbl}>From</label><input type="date" value={form.start_date} onChange={e => set('start_date', e.target.value)} style={inp} /></div>
-            <div><label style={lbl}>To</label><input type="date" value={form.end_date} onChange={e => set('end_date', e.target.value)} style={inp} /></div>
+            <div><label style={lbl}>From</label><input type="date" value={form.start_date} min={todayDateStr()} onChange={e => set('start_date', e.target.value)} style={inp} /></div>
+            <div><label style={lbl}>To</label><input type="date" value={form.end_date} min={form.start_date || todayDateStr()} onChange={e => set('end_date', e.target.value)} style={inp} /></div>
             <div><label style={lbl}>Days</label><input type="number" value={form.days} onChange={e => set('days', e.target.value)} min="0.5" step="0.5" style={inp} /></div>
           </div>
           <div><label style={lbl}>Reason (optional)</label>
@@ -708,15 +799,16 @@ function ApplyLeaveModal({ types, onClose, onSaved }) {
 }
 
 function LeaveTypesAdmin({ types, onSaved, showNew, setShowNew }) {
-  const [newType, setNewType] = useState({ name:'', days_per_year:12, carry_forward:false });
+  const [newType, setNewType] = useState({ name:'', days_per_year:12, carry_forward:false, max_carry_forward_days:0 });
   const [saving, setSaving]   = useState(false);
+  const [cfEdits, setCfEdits] = useState({});
 
   const save = async () => {
     if (!newType.name) return;
     setSaving(true);
     try {
       await api.post('/hr/leaves/types', newType);
-      setNewType({ name:'', days_per_year:12, carry_forward:false });
+      setNewType({ name:'', days_per_year:12, carry_forward:false, max_carry_forward_days:0 });
       setShowNew(false);
       onSaved();
     } finally { setSaving(false); }
@@ -727,16 +819,37 @@ function LeaveTypesAdmin({ types, onSaved, showNew, setShowNew }) {
     onSaved();
   };
 
+  const saveCarryForwardCap = async (t) => {
+    const val = cfEdits[t.id];
+    if (val == null || val === '') return;
+    await api.put(`/hr/leaves/types/${t.id}`, { max_carry_forward_days: Number(val) });
+    setCfEdits(e => ({ ...e, [t.id]: undefined }));
+    onSaved();
+  };
+
   const inp = { height:36, padding:'0 10px', border:'1px solid #E5E5EA', borderRadius:8, fontSize:13, background:'#FAFAFB', outline:'none' };
 
   return (
     <div>
       {types.map(t => (
-        <div key={t.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'12px 14px', background:'#fff', border:'1px solid #ECECEF', borderRadius:10, marginBottom:8 }}>
-          <div style={{ flex:1 }}>
+        <div key={t.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'12px 14px', background:'#fff', border:'1px solid #ECECEF', borderRadius:10, marginBottom:8, flexWrap:'wrap' }}>
+          <div style={{ flex:1, minWidth:160 }}>
             <div style={{ fontWeight:600, fontSize:13.5 }}>{t.name}</div>
-            <div style={{ fontSize:12, color:'#7E7E88' }}>{t.days_per_year} days/year{t.carry_forward ? ' · Carry forward' : ''}</div>
+            <div style={{ fontSize:12, color:'#7E7E88' }}>{t.days_per_year} days/year{t.carry_forward ? ` · Carries forward up to ${t.max_carry_forward_days} days` : ''}</div>
           </div>
+          {t.carry_forward && (
+            <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+              <label style={{ fontSize:11.5, color:'#9A9AA4', fontWeight:600 }}>Max carry-forward</label>
+              <input type="number" min="0" step="0.5"
+                value={cfEdits[t.id] ?? t.max_carry_forward_days}
+                onChange={e => setCfEdits(edits => ({ ...edits, [t.id]: e.target.value }))}
+                style={{ ...inp, width:70, height:30 }} />
+              <button onClick={() => saveCarryForwardCap(t)}
+                style={{ fontSize:12, color:'#fff', background:ACCENT, border:'none', borderRadius:7, padding:'4px 10px', cursor:'pointer', fontWeight:600 }}>
+                Save
+              </button>
+            </div>
+          )}
           <Badge label={t.is_active ? 'Active' : 'Inactive'} color={t.is_active ? '#16A34A' : '#6B7280'} bg={t.is_active ? '#ECFDF3' : '#F3F4F6'} />
           <button onClick={() => toggle(t)} style={{ fontSize:12, color:'#5A5A66', background:'#F2F2F5', border:'none', borderRadius:7, padding:'4px 10px', cursor:'pointer', fontWeight:600 }}>
             {t.is_active ? 'Deactivate' : 'Activate'}
@@ -752,6 +865,11 @@ function LeaveTypesAdmin({ types, onSaved, showNew, setShowNew }) {
               <input type="checkbox" checked={newType.carry_forward} onChange={e => setNewType(f=>({...f,carry_forward:e.target.checked}))} />
               Carry forward
             </label>
+            {newType.carry_forward && (
+              <input type="number" min="0" step="0.5" value={newType.max_carry_forward_days}
+                onChange={e => setNewType(f=>({...f,max_carry_forward_days:e.target.value}))}
+                placeholder="Max days" style={{ ...inp, width:90 }} />
+            )}
           </div>
           <div style={{ display:'flex', gap:8 }}>
             <button onClick={save} disabled={saving} style={{ height:34, padding:'0 16px', borderRadius:8, background:ACCENT, color:'#fff', fontSize:13, fontWeight:700 }}>Add</button>
@@ -768,173 +886,267 @@ function LeaveTypesAdmin({ types, onSaved, showNew, setShowNew }) {
   );
 }
 
-// ── Attendance ───────────────────────────────────────────────────────────────
-function AttendanceView({ user }) {
+// ── Leave Calendar ───────────────────────────────────────────────────────────
+function HolidayPanel({ holidays, admin, onAdded, onDeleted }) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({ date:'', name:'' });
+  const [saving, setSaving] = useState(false);
+
+  const add = async () => {
+    if (!form.date || !form.name) return;
+    setSaving(true);
+    try {
+      await api.post('/hr/holidays', form);
+      setForm({ date:'', name:'' });
+      setShowAdd(false);
+      onAdded();
+    } finally { setSaving(false); }
+  };
+
+  const del = async (id) => {
+    await api.delete(`/hr/holidays/${id}`);
+    onDeleted();
+  };
+
+  const inp = { height:34, padding:'0 10px', border:'1px solid #E5E5EA', borderRadius:8, fontSize:13, background:'#FAFAFB', outline:'none' };
+
+  return (
+    <div style={{ background:'#fff', border:'1px solid #ECECEF', borderRadius:12, padding:'12px 16px', marginBottom:18 }}>
+      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom: holidays.length || admin ? 10 : 0 }}>
+        <div style={{ fontSize:13, fontWeight:700, color:'#5A5A66', flex:1 }}>Company Holidays</div>
+        {admin && !showAdd && (
+          <button onClick={() => setShowAdd(true)}
+            style={{ display:'flex', alignItems:'center', gap:5, height:30, padding:'0 12px', borderRadius:7, background:'#F2F2F5', color:'#5A5A66', fontSize:12, fontWeight:600, border:'none', cursor:'pointer' }}>
+            <HRIcon name="plus" size={13} />Add Holiday
+          </button>
+        )}
+      </div>
+      {holidays.length > 0 && (
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+          {holidays.map(h => (
+            <div key={h.id} style={{ display:'flex', alignItems:'center', gap:6, background:HOLIDAY_COLOR.bg, color:HOLIDAY_COLOR.color, borderRadius:7, padding:'5px 10px', fontSize:12, fontWeight:600 }}>
+              {fmtDate(h.date)} · {h.name}
+              {admin && (
+                <button onClick={() => del(h.id)} style={{ background:'none', border:'none', cursor:'pointer', color:HOLIDAY_COLOR.color, display:'flex' }}>
+                  <HRIcon name="x" size={11} />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {showAdd && (
+        <div style={{ display:'flex', gap:8, alignItems:'center', marginTop:10, flexWrap:'wrap' }}>
+          <input type="date" value={form.date} onChange={e => setForm(f => ({...f, date:e.target.value}))} style={inp} />
+          <input value={form.name} onChange={e => setForm(f => ({...f, name:e.target.value}))} placeholder="Holiday name" style={{ ...inp, flex:1, minWidth:140 }} />
+          <button onClick={add} disabled={saving} style={{ height:34, padding:'0 14px', borderRadius:8, background:ACCENT, color:'#fff', fontSize:12.5, fontWeight:700, border:'none', cursor:'pointer' }}>Add</button>
+          <button onClick={() => setShowAdd(false)} style={{ height:34, padding:'0 12px', borderRadius:8, background:'#F2F2F5', color:'#5A5A66', fontSize:12.5, fontWeight:600, border:'none', cursor:'pointer' }}>Cancel</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AdhocLeaveModal({ types, users, onClose, onSaved }) {
+  const [form, setForm] = useState({ user_id:'', leave_type_id: types[0]?.id || '', start_date:'', end_date:'', days:'', reason:'' });
+  const [saving, setSaving] = useState(false);
+  const [error, setError]   = useState('');
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  useEffect(() => {
+    if (form.start_date && form.end_date) {
+      const diff = Math.round((new Date(form.end_date) - new Date(form.start_date)) / 86400000) + 1;
+      if (diff > 0) set('days', diff);
+    }
+  }, [form.start_date, form.end_date]);
+
+  const save = async () => {
+    if (!form.user_id || !form.leave_type_id || !form.start_date || !form.end_date || !form.days) {
+      setError('Employee and all date fields are required'); return;
+    }
+    if (form.end_date < form.start_date) { setError('End date cannot be before start date'); return; }
+    setSaving(true); setError('');
+    try {
+      await api.post('/hr/leaves/requests', form);
+      onSaved(); onClose();
+    } catch (err) { setError(err.response?.data?.error || 'Failed'); }
+    finally { setSaving(false); }
+  };
+
+  const inp = { width:'100%', height:38, padding:'0 10px', border:'1px solid #E5E5EA', borderRadius:8, fontSize:13, background:'#FAFAFB', outline:'none' };
+  const lbl = { display:'block', fontSize:11.5, fontWeight:700, color:'#6B6B76', marginBottom:5 };
+
+  return (
+    <div style={{ position:'fixed', inset:0, zIndex:60, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
+      <div onClick={onClose} style={{ position:'absolute', inset:0, background:'rgba(20,20,30,.34)' }} />
+      <div style={{ position:'relative', width:420, background:'#fff', borderRadius:16, boxShadow:'0 24px 60px rgba(20,20,30,.24)', overflow:'hidden' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'18px 22px', borderBottom:'1px solid #EEEEF1' }}>
+          <div style={{ fontSize:16, fontWeight:700 }}>Mark Leave (Adhoc)</div>
+          <button onClick={onClose} style={{ color:'#8A8A94', background:'none', border:'none', cursor:'pointer' }}><HRIcon name="x" size={18} /></button>
+        </div>
+        <div style={{ padding:'20px 22px', display:'flex', flexDirection:'column', gap:14 }}>
+          <div><label style={lbl}>Employee</label>
+            <select value={form.user_id} onChange={e => set('user_id', e.target.value)} style={{ ...inp, cursor:'pointer' }}>
+              <option value="">— Select employee —</option>
+              {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </div>
+          <div><label style={lbl}>Leave Type</label>
+            <select value={form.leave_type_id} onChange={e => set('leave_type_id', e.target.value)} style={{ ...inp, cursor:'pointer' }}>
+              {types.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 80px', gap:10 }}>
+            <div><label style={lbl}>From</label><input type="date" value={form.start_date} onChange={e => set('start_date', e.target.value)} style={inp} /></div>
+            <div><label style={lbl}>To</label><input type="date" value={form.end_date} min={form.start_date || ''} onChange={e => set('end_date', e.target.value)} style={inp} /></div>
+            <div><label style={lbl}>Days</label><input type="number" value={form.days} onChange={e => set('days', e.target.value)} min="0.5" step="0.5" style={inp} /></div>
+          </div>
+          <div><label style={lbl}>Reason (optional)</label>
+            <textarea value={form.reason} onChange={e => set('reason', e.target.value)}
+              style={{ ...inp, height:70, padding:'8px 10px', resize:'vertical' }} />
+          </div>
+          {error && <div style={{ background:'#FEF2F2', border:'1px solid #FECACA', borderRadius:8, padding:'8px 12px', color:'#DC2626', fontSize:13 }}>{error}</div>}
+        </div>
+        <div style={{ display:'flex', justifyContent:'flex-end', gap:10, padding:'14px 22px', borderTop:'1px solid #EEEEF1' }}>
+          <button onClick={onClose} style={{ height:38, padding:'0 16px', borderRadius:9, background:'#F2F2F5', color:'#5A5A66', fontSize:13.5, fontWeight:600 }}>Cancel</button>
+          <button onClick={save} disabled={saving}
+            style={{ height:38, padding:'0 20px', borderRadius:9, background:ACCENT, color:'#fff', fontSize:13.5, fontWeight:700, opacity:saving?.7:1 }}>
+            {saving ? 'Saving…' : 'Mark Approved'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LeaveCalendarView({ user }) {
   const today = new Date();
-  const [tab, setTab]       = useState('my');
-  const [year, setYear]     = useState(today.getFullYear());
-  const [month, setMonth]   = useState(today.getMonth());
-  const [logs, setLogs]     = useState([]);
-  const [teamData, setTeamData] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const canSeeTeam = isHRManager(user);
+  const [year, setYear]   = useState(today.getFullYear());
+  const [month, setMonth] = useState(today.getMonth());
+  const [requests, setRequests] = useState([]);
+  const [holidays, setHolidays] = useState([]);
+  const [types, setTypes]       = useState([]);
+  const [teamUsers, setTeamUsers] = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [showAdhoc, setShowAdhoc] = useState(false);
+  const admin = isHRAdmin(user);
 
   const ym = `${year}-${String(month + 1).padStart(2,'0')}`;
 
-  const loadMy = useCallback(async () => {
+  const load = useCallback(async () => {
     setLoading(true);
-    try { const r = await api.get(`/hr/attendance?month=${ym}`); setLogs(r.data); }
-    finally { setLoading(false); }
-  }, [ym]);
+    try {
+      const [reqR, holR, typR, empR] = await Promise.all([
+        api.get(`/hr/leaves/calendar?month=${ym}`),
+        api.get(`/hr/holidays?year=${year}`),
+        api.get('/hr/leaves/types'),
+        api.get('/hr/leaves/roster'),
+      ]);
+      setRequests(reqR.data);
+      setHolidays(holR.data);
+      setTypes(typR.data);
+      setTeamUsers(empR.data);
+    } finally { setLoading(false); }
+  }, [ym, year]);
 
-  const loadTeam = useCallback(async () => {
-    setLoading(true);
-    try { const r = await api.get(`/hr/attendance/team?month=${ym}`); setTeamData(r.data); }
-    finally { setLoading(false); }
-  }, [ym]);
-
-  useEffect(() => { tab === 'my' ? loadMy() : loadTeam(); }, [tab, loadMy, loadTeam]);
-
-  const mark = async (uid, date, status) => {
-    await api.put(`/hr/attendance/${uid}/${date}`, { status });
-    tab === 'my' ? loadMy() : loadTeam();
-  };
+  useEffect(() => { load(); }, [load]);
 
   const prevMonth = () => { if (month === 0) { setYear(y => y-1); setMonth(11); } else setMonth(m => m-1); };
   const nextMonth = () => { if (month === 11) { setYear(y => y+1); setMonth(0); } else setMonth(m => m+1); };
 
-  const logMap = {};
-  logs.forEach(l => { logMap[l.date?.slice(0,10)] = l; });
-
-  // Build team user→day map from flat rows
-  const teamMap = {};
-  teamData.forEach(r => {
-    if (!teamMap[r.user_id]) teamMap[r.user_id] = { id: r.user_id, name: r.name, color: r.color, days: {} };
-    if (r.date && r.status) teamMap[r.user_id].days[r.date.slice(0,10)] = r.status;
-  });
-  const teamUsers = Object.values(teamMap);
-
+  const pad2 = n => String(n).padStart(2, '0');
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const firstDay    = new Date(year, month, 1).getDay();
   const adjustedFirst = (firstDay + 6) % 7; // Mon=0
-  const todayStr = today.toISOString().slice(0,10);
+  const todayStr = `${today.getFullYear()}-${pad2(today.getMonth() + 1)}-${pad2(today.getDate())}`;
   const days = Array.from({ length: daysInMonth }, (_, i) => {
-    const d = new Date(year, month, i + 1);
-    const dateStr = d.toISOString().slice(0,10);
-    const isWeekend = d.getDay() === 0 || d.getDay() === 6;
-    return { num: i + 1, dateStr, isWeekend, isToday: dateStr === todayStr, log: logMap[dateStr] };
+    const dayNum = i + 1;
+    const dateStr = `${year}-${pad2(month + 1)}-${pad2(dayNum)}`;
+    const isWeekend = new Date(year, month, dayNum).getDay() === 0 || new Date(year, month, dayNum).getDay() === 6;
+    return { num: dayNum, dateStr, isWeekend, isToday: dateStr === todayStr };
   });
 
-  const DAYS_LABEL = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-  const STATUSES = ['present','wfh','half_day','absent','leave'];
-  const tabBtn = (key, label) => (
-    <button key={key} onClick={() => setTab(key)} style={{
-      height:34, padding:'0 16px', borderRadius:8, fontSize:13, fontWeight:600, border:'none', cursor:'pointer',
-      background: tab === key ? ACCENT : '#F2F2F5', color: tab === key ? '#fff' : '#5A5A66',
-    }}>{label}</button>
-  );
+  // Expand each approved request's date range into per-day entries, clipped to the visible month.
+  // Requests' start_date/end_date are plain calendar dates serialized at UTC midnight — do all
+  // arithmetic in UTC to avoid local-timezone round-trips shifting the date by a day.
+  const leaveByUserDay = {};
+  const monthStartUTC = Date.UTC(year, month, 1);
+  const monthEndUTC   = Date.UTC(year, month, daysInMonth);
+  requests.forEach(r => {
+    const reqStart = new Date(r.start_date).getTime();
+    const reqEnd   = new Date(r.end_date).getTime();
+    const clampedStart = Math.max(reqStart, monthStartUTC);
+    const clampedEnd   = Math.min(reqEnd, monthEndUTC);
+    for (let t = clampedStart; t <= clampedEnd; t += 86400000) {
+      const key = new Date(t).toISOString().slice(0,10);
+      (leaveByUserDay[r.user_id] ??= {})[key] = { leave_type_id: r.leave_type_id, leave_type_name: r.leave_type_name };
+    }
+  });
+
+  const holidayByDay = {};
+  holidays.forEach(h => { holidayByDay[h.date.slice(0,10)] = h.name; });
+
+  const colorForType = (id) => LEAVE_TYPE_COLORS[Math.max(0, types.findIndex(t => t.id === id)) % LEAVE_TYPE_COLORS.length];
 
   return (
     <div>
       <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:20 }}>
-        <h2 style={{ fontSize:20, fontWeight:800, letterSpacing:'-0.02em', flex:1 }}>Attendance</h2>
-        <div style={{ fontSize:12, color:'#9A9AA4', maxWidth:320, textAlign:'right', lineHeight:1.5 }}>
-          Self-reported daily status. Employees mark their own check-in (Present / WFH / Half Day / Absent / Leave).
-        </div>
+        <h2 style={{ fontSize:20, fontWeight:800, letterSpacing:'-0.02em', flex:1 }}>Leave Calendar</h2>
+        {admin && (
+          <button onClick={() => setShowAdhoc(true)}
+            style={{ display:'flex', alignItems:'center', gap:6, height:36, padding:'0 16px', borderRadius:9, background:ACCENT, color:'#fff', fontSize:13, fontWeight:700, border:'none', cursor:'pointer' }}>
+            <HRIcon name="plus" size={15} />Add Adhoc Leave
+          </button>
+        )}
       </div>
 
-      {/* Tabs */}
-      {canSeeTeam && (
-        <div style={{ display:'flex', gap:6, marginBottom:18 }}>
-          {tabBtn('my', 'My Attendance')}
-          {tabBtn('team', 'Team View')}
-        </div>
-      )}
+      <HolidayPanel holidays={holidays} admin={admin} onAdded={load} onDeleted={load} />
 
       {/* Month nav */}
       <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:20 }}>
-        <button onClick={prevMonth} style={{ background:'#F2F2F5', border:'none', borderRadius:8, width:32, height:32, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+        <button onClick={prevMonth} style={{ background:'#F2F2F5', border:'none', borderRadius:8, width:32, height:32, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', transform:'rotate(90deg)' }}>
           <HRIcon name="chevron" size={16} color="#5A5A66" />
         </button>
         <div style={{ fontSize:15, fontWeight:700, minWidth:160, textAlign:'center' }}>
           {new Date(year, month).toLocaleDateString('en-IN',{ month:'long', year:'numeric' })}
         </div>
-        <button onClick={nextMonth} style={{ background:'#F2F2F5', border:'none', borderRadius:8, width:32, height:32, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', transform:'rotate(180deg)' }}>
+        <button onClick={nextMonth} style={{ background:'#F2F2F5', border:'none', borderRadius:8, width:32, height:32, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', transform:'rotate(-90deg)' }}>
           <HRIcon name="chevron" size={16} color="#5A5A66" />
         </button>
       </div>
 
       {/* Legend */}
       <div style={{ display:'flex', gap:10, marginBottom:16, flexWrap:'wrap' }}>
-        {STATUSES.map(s => (
-          <div key={s} style={{ display:'flex', alignItems:'center', gap:5, fontSize:12, color:'#6B6B76' }}>
-            <span style={{ width:18, height:18, borderRadius:5, background:ATT_META[s].bg, border:`1px solid ${ATT_META[s].color}22`,
-              display:'inline-flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:700, color:ATT_META[s].color }}>
-              {ATT_META[s].label}
-            </span>
-            {ATT_META[s].full}
+        {types.map(t => (
+          <div key={t.id} style={{ display:'flex', alignItems:'center', gap:5, fontSize:12, color:'#6B6B76' }}>
+            <span style={{ width:12, height:12, borderRadius:4, background:colorForType(t.id) }} />
+            {t.name}
           </div>
         ))}
+        <div style={{ display:'flex', alignItems:'center', gap:5, fontSize:12, color:'#6B6B76' }}>
+          <span style={{ width:12, height:12, borderRadius:4, background:HOLIDAY_COLOR.bg, border:`1px solid ${HOLIDAY_COLOR.color}55` }} />
+          Holiday
+        </div>
       </div>
 
-      {loading ? <div style={{ color:'#9A9AA4', padding:24 }}>Loading…</div> : tab === 'my' ? (
-        <>
-          {/* My Attendance Calendar */}
-          <div style={{ background:'#fff', border:'1px solid #ECECEF', borderRadius:14, overflow:'hidden' }}>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', borderBottom:'1px solid #F0F0F3' }}>
-              {DAYS_LABEL.map(d => (
-                <div key={d} style={{ padding:'8px 0', textAlign:'center', fontSize:11.5, fontWeight:700, color:'#9A9AA4' }}>{d}</div>
-              ))}
-            </div>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)' }}>
-              {Array.from({ length: adjustedFirst }, (_, i) => (
-                <div key={`e${i}`} style={{ padding:'8px 4px', minHeight:52, borderRight:'1px solid #F6F6F9', borderBottom:'1px solid #F6F6F9' }} />
-              ))}
-              {days.map(d => {
-                const m2 = d.log ? ATT_META[d.log.status] : null;
-                const isFuture = d.dateStr > todayStr;
-                return (
-                  <div key={d.dateStr} style={{
-                    padding:'6px 4px', minHeight:52, borderRight:'1px solid #F6F6F9', borderBottom:'1px solid #F6F6F9',
-                    background: d.isToday ? `${ACCENT}08` : d.isWeekend ? '#FAFAFB' : '#fff', position:'relative',
-                  }}>
-                    <div style={{ fontSize:12, fontWeight: d.isToday ? 800 : 500, color: d.isToday ? ACCENT : d.isWeekend ? '#C0C0CC' : '#5A5A66', marginBottom:3 }}>{d.num}</div>
-                    {m2 && (
-                      <div style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:22, height:22, borderRadius:6, background:m2.bg, color:m2.color, fontSize:10.5, fontWeight:800 }}>
-                        {m2.label}
-                      </div>
-                    )}
-                    {!d.isWeekend && !isFuture && (
-                      <select value={d.log?.status || ''} onChange={e => e.target.value && mark(user.id, d.dateStr, e.target.value)}
-                        title="Change attendance status"
-                        style={{ position:'absolute', bottom:3, right:2, width:26, height:18, cursor:'pointer', fontSize:9.5, border:'1px solid #D1D1D8', borderRadius:4, background:'#F8F8FB', color:'#5A5A66', padding:'0 2px' }}>
-                        <option value="">—</option>
-                        {STATUSES.map(s => <option key={s} value={s}>{ATT_META[s].full}</option>)}
-                      </select>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          <div style={{ marginTop:10, fontSize:12, color:'#9A9AA4' }}>Click any past day cell to set / change your attendance status.</div>
-        </>
-      ) : (
-        /* Team Attendance Matrix */
+      {loading ? <div style={{ color:'#9A9AA4', padding:24 }}>Loading…</div> : (
         teamUsers.length === 0 ? (
           <div style={{ background:'#fff', border:'1px solid #ECECEF', borderRadius:14, padding:48, textAlign:'center', color:'#9A9AA4' }}>
             <HRIcon name="users" size={36} color="#D1D1D8" />
             <div style={{ marginTop:12, fontWeight:600 }}>No team members found</div>
           </div>
         ) : (
-          <React.Fragment>
           <div style={{ background:'#fff', border:'1px solid #ECECEF', borderRadius:14, overflow:'auto' }}>
             <table style={{ borderCollapse:'collapse', minWidth:'100%', fontSize:12 }}>
               <thead>
                 <tr style={{ background:'#FAFAFB' }}>
                   <th style={{ padding:'8px 12px', textAlign:'left', fontWeight:700, color:'#5A5A66', whiteSpace:'nowrap', borderBottom:'1px solid #ECECEF', position:'sticky', left:0, background:'#FAFAFB', zIndex:1 }}>Employee</th>
                   {days.map(d => (
-                    <th key={d.dateStr} style={{ padding:'4px 3px', textAlign:'center', fontWeight: d.isToday ? 800 : 500, color: d.isToday ? ACCENT : d.isWeekend ? '#C0C0CC' : '#9A9AA4', minWidth:28, borderBottom:'1px solid #ECECEF', background: d.isWeekend ? '#F6F6F9' : undefined }}>
+                    <th key={d.dateStr} title={holidayByDay[d.dateStr] || ''} style={{
+                      padding:'4px 3px', textAlign:'center', fontWeight: d.isToday ? 800 : 500,
+                      color: d.isToday ? ACCENT : d.isWeekend ? '#C0C0CC' : '#9A9AA4', minWidth:28, borderBottom:'1px solid #ECECEF',
+                      background: holidayByDay[d.dateStr] ? HOLIDAY_COLOR.bg : d.isWeekend ? '#F6F6F9' : undefined,
+                    }}>
                       {d.num}
                     </th>
                   ))}
@@ -952,24 +1164,17 @@ function AttendanceView({ user }) {
                       </div>
                     </td>
                     {days.map(d => {
-                      const st = u2.days[d.dateStr];
-                      const meta = st ? ATT_META[st] : null;
-                      const isFuture = d.dateStr > todayStr;
+                      const leave = leaveByUserDay[u2.id]?.[d.dateStr];
+                      const isHoliday = !!holidayByDay[d.dateStr];
                       return (
-                        <td key={d.dateStr} style={{ padding:'4px 2px', textAlign:'center', borderBottom:'1px solid #F0F0F3', background: d.isWeekend ? '#F6F6F9' : undefined, position:'relative' }}>
-                          {!d.isWeekend && !isFuture && isHRAdmin(user) ? (
-                            <select value={st || ''} onChange={e => e.target.value && mark(u2.id, d.dateStr, e.target.value)}
-                              title={`Set ${u2.name}'s attendance`}
-                              style={{ width:24, height:22, fontSize:9, fontWeight:700, cursor:'pointer', border:`1px solid ${meta ? meta.color + '66' : '#D1D1D8'}`, borderRadius:4, background:meta ? meta.bg : '#F5F5FA', color:meta ? meta.color : '#9A9AA4', textAlign:'center', padding:0 }}>
-                              <option value="">{meta ? meta.label : '+'}</option>
-                              {STATUSES.map(s => <option key={s} value={s}>{ATT_META[s].full}</option>)}
-                            </select>
-                          ) : meta ? (
-                            <span title={meta.full} style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:20, height:20, borderRadius:5, background:meta.bg, color:meta.color, fontSize:9.5, fontWeight:800 }}>
-                              {meta.label}
-                            </span>
-                          ) : d.isWeekend ? (
-                            <span style={{ color:'#E0E0E8', fontSize:10 }}>—</span>
+                        <td key={d.dateStr} title={leave ? leave.leave_type_name : ''} style={{
+                          padding:'4px 2px', textAlign:'center', borderBottom:'1px solid #F0F0F3',
+                          background: isHoliday ? HOLIDAY_COLOR.bg : d.isWeekend ? '#F6F6F9' : undefined, position:'relative',
+                        }}>
+                          {leave ? (
+                            <span style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:16, height:16, borderRadius:'50%', background:colorForType(leave.leave_type_id) }} />
+                          ) : isHoliday ? (
+                            <span style={{ color:HOLIDAY_COLOR.color, fontSize:10 }}>•</span>
                           ) : (
                             <span style={{ color:'#D1D1D8', fontSize:10 }}>·</span>
                           )}
@@ -981,9 +1186,11 @@ function AttendanceView({ user }) {
               </tbody>
             </table>
           </div>
-          {isHRAdmin(user) && <div style={{ marginTop:8, fontSize:12, color:'#9A9AA4' }}>HR Admin: click any weekday cell to set or change an employee's attendance status.</div>}
-          </React.Fragment>
         )
+      )}
+
+      {showAdhoc && (
+        <AdhocLeaveModal types={types} users={teamUsers} onClose={() => setShowAdhoc(false)} onSaved={load} />
       )}
     </div>
   );
@@ -1000,14 +1207,16 @@ const dlFile = async (endpoint, originalName) => {
   } catch { alert('Download failed'); }
 };
 
-function DocumentsView({ user }) {
+// mode: 'mine' (self-only — no upload/delete/ack-tracking, everyone including admins) |
+//       'manage' (HR Admin only — all employees' assigned docs + full company-doc management)
+function DocumentsView({ user, mode = 'mine' }) {
   const [docTab, setDocTab]   = useState('company');
   const [docs, setDocs]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [showNew, setShowNew] = useState(false);
   const [ackDoc, setAckDoc]   = useState(null); // doc for "who has read" modal
   const [acks, setAcks]       = useState([]);
-  const hrAdmin = isHRAdmin(user);
+  const canManage = mode === 'manage' && isHRAdmin(user);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1029,7 +1238,7 @@ function DocumentsView({ user }) {
   };
 
   const companyDocs  = docs.filter(d => d.doc_category === 'company');
-  const employeeDocs = docs.filter(d => d.doc_category === 'employee');
+  const employeeDocs = docs.filter(d => d.doc_category === 'employee' && (canManage || d.assigned_to === user.id));
   const visible = docTab === 'company' ? companyDocs : employeeDocs;
 
   const tabBtn = (key, label, count) => (
@@ -1048,20 +1257,17 @@ function DocumentsView({ user }) {
             <div style={{ fontSize:14, fontWeight:700 }}>{d.title}</div>
             <span style={{ fontSize:10.5, color:'#9A9AA4', background:'#F0F0F3', padding:'1px 7px', borderRadius:5 }}>v{d.version}</span>
             {d.is_mandatory && <Badge label="Mandatory" color="#DC2626" bg="#FEF2F2" />}
-            {d.doc_category === 'employee' && d.assigned_to_name && (
-              <Badge label={`For: ${d.assigned_to_name}`} color="#2563EB" bg="#EFF4FF" />
-            )}
           </div>
           {d.description && <div style={{ fontSize:12.5, color:'#7E7E88', marginBottom:6 }}>{d.description}</div>}
           <div style={{ fontSize:11.5, color:'#B0B0BC', display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
             <span>Added by {d.created_by_name} · {fmtDate(d.created_at)}</span>
-            {d.doc_category === 'company' && hrAdmin && (
+            {d.doc_category === 'company' && canManage && (
               <button onClick={() => openAcks(d)}
                 style={{ background:'none', border:'none', cursor:'pointer', color:ACCENT, fontSize:11.5, fontWeight:600, padding:0 }}>
                 {d.ack_count} acknowledged ↗
               </button>
             )}
-            {d.doc_category === 'company' && !hrAdmin && (
+            {d.doc_category === 'company' && !canManage && (
               <span>{d.ack_count} acknowledged</span>
             )}
           </div>
@@ -1085,7 +1291,7 @@ function DocumentsView({ user }) {
               </button>
             )
           )}
-          {hrAdmin && (
+          {canManage && (
             <button onClick={() => del(d.id)} style={{ background:'none', border:'none', cursor:'pointer', color:'#DC2626', padding:4 }}>
               <HRIcon name="trash" size={14} />
             </button>
@@ -1098,8 +1304,8 @@ function DocumentsView({ user }) {
   return (
     <div>
       <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:20 }}>
-        <h2 style={{ fontSize:20, fontWeight:800, letterSpacing:'-0.02em', flex:1 }}>Documents</h2>
-        {hrAdmin && (
+        <h2 style={{ fontSize:20, fontWeight:800, letterSpacing:'-0.02em', flex:1 }}>{canManage ? 'Manage Documents' : 'My Documents'}</h2>
+        {canManage && (
           <button onClick={() => setShowNew(true)}
             style={{ display:'flex', alignItems:'center', gap:6, height:36, padding:'0 16px', borderRadius:9, background:ACCENT, color:'#fff', fontSize:13, fontWeight:700, border:'none', cursor:'pointer' }}>
             <HRIcon name="plus" size={15} />Upload Document
@@ -1110,7 +1316,7 @@ function DocumentsView({ user }) {
       {/* Section tabs */}
       <div style={{ display:'flex', gap:6, marginBottom:20 }}>
         {tabBtn('company', 'Company Docs', companyDocs.length)}
-        {tabBtn('employee', 'Employee Docs', employeeDocs.length)}
+        {tabBtn('employee', canManage ? 'Employee Docs' : 'My Documents', employeeDocs.length)}
       </div>
 
       {docTab === 'company' && (
@@ -1120,7 +1326,9 @@ function DocumentsView({ user }) {
       )}
       {docTab === 'employee' && (
         <div style={{ fontSize:12.5, color:'#9A9AA4', marginBottom:14 }}>
-          Personal documents (appraisal letters, joining letters, etc.) — visible only to the assigned employee and HR Admin.
+          {canManage
+            ? 'Personal documents (appraisal letters, joining letters, etc.) assigned to specific employees.'
+            : 'Personal documents (appraisal letters, joining letters, etc.) assigned to you.'}
         </div>
       )}
 
@@ -1129,8 +1337,17 @@ function DocumentsView({ user }) {
         <div style={{ background:'#fff', border:'1px solid #ECECEF', borderRadius:14, padding:48, textAlign:'center', color:'#9A9AA4' }}>
           <HRIcon name="doc" size={36} color="#D1D1D8" />
           <div style={{ marginTop:12, fontWeight:600 }}>No {docTab === 'company' ? 'company' : 'employee'} documents yet</div>
-          {hrAdmin && <div style={{ marginTop:6, fontSize:13 }}>Use "Upload Document" to add one.</div>}
+          {canManage && <div style={{ marginTop:6, fontSize:13 }}>Use "Upload Document" to add one.</div>}
         </div>
+      ) : (docTab === 'employee' && canManage) ? (
+        <GroupedByEmployee
+          items={visible}
+          getEmployeeId={d => d.assigned_to}
+          getEmployeeName={d => d.assigned_to_name}
+          getEmployeeColor={d => d.assigned_to_color}
+          Avatar={Avatar}
+          renderItem={d => <DocCard key={d.id} d={d} />}
+        />
       ) : visible.map(d => <DocCard key={d.id} d={d} />)}
 
       {showNew && <UploadDocModal onClose={() => setShowNew(false)} onSaved={load} />}
@@ -1282,20 +1499,28 @@ function UploadDocModal({ onClose, onSaved }) {
 }
 
 // ── Payroll ───────────────────────────────────────────────────────────────────
-function PayrollView({ user }) {
-  const hrAdmin = isHRAdmin(user);
+// mode: 'mine' (self-only — everyone, no selector/upload) | 'admin' (HR Admin only — pick any employee, upload)
+function PayrollView({ user, mode = 'mine' }) {
+  const canManage = mode === 'admin' && isHRAdmin(user);
   const [employees, setEmployees] = useState([]);
-  const [targetUser, setTargetUser] = useState(user.id);
+  const [targetUser, setTargetUser] = useState(canManage ? '' : user.id);
   const [year, setYear]   = useState(new Date().getFullYear());
   const [slips, setSlips] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showUpload, setShowUpload] = useState(false);
 
   useEffect(() => {
-    if (hrAdmin) api.get('/hr/employees').then(r => setEmployees(r.data)).catch(() => {});
-  }, [hrAdmin]);
+    if (canManage) {
+      api.get('/hr/employees').then(r => {
+        setEmployees(r.data);
+        // Default to another employee, not the admin's own record — this page is explicitly "someone else's payroll".
+        setTargetUser(prev => prev || r.data.find(e => e.id !== user.id)?.id || r.data[0]?.id || '');
+      }).catch(() => {});
+    }
+  }, [canManage, user.id]);
 
   const load = useCallback(async () => {
+    if (!targetUser) return;
     setLoading(true);
     try {
       const r = await api.get(`/hr/payroll/slips?userId=${targetUser}&year=${year}`);
@@ -1306,7 +1531,7 @@ function PayrollView({ user }) {
   useEffect(() => { load(); }, [load]);
 
   const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
-  const targetName = hrAdmin ? (employees.find(e => e.id === targetUser)?.name || 'Employee') : user.name;
+  const targetName = canManage ? (employees.find(e => e.id === targetUser)?.name || 'Employee') : user.name;
 
   const delSlip = async (id) => {
     if (!window.confirm('Delete this salary slip?')) return;
@@ -1317,8 +1542,8 @@ function PayrollView({ user }) {
   return (
     <div>
       <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:20, flexWrap:'wrap' }}>
-        <h2 style={{ fontSize:20, fontWeight:800, letterSpacing:'-0.02em', flex:1 }}>Payroll</h2>
-        {hrAdmin && (
+        <h2 style={{ fontSize:20, fontWeight:800, letterSpacing:'-0.02em', flex:1 }}>{canManage ? 'Payroll (Admin)' : 'My Payroll'}</h2>
+        {canManage && (
           <button onClick={() => setShowUpload(true)}
             style={{ display:'flex', alignItems:'center', gap:6, height:36, padding:'0 16px', borderRadius:9, background:ACCENT, color:'#fff', fontSize:13, fontWeight:700, border:'none', cursor:'pointer' }}>
             <HRIcon name="plus" size={15} />Upload Slip
@@ -1328,7 +1553,7 @@ function PayrollView({ user }) {
 
       {/* Filters */}
       <div style={{ display:'flex', gap:10, marginBottom:20, flexWrap:'wrap', alignItems:'center' }}>
-        {hrAdmin && (
+        {canManage && (
           <select value={targetUser} onChange={e => setTargetUser(e.target.value)}
             style={{ height:36, padding:'0 12px', border:'1px solid #E5E5EA', borderRadius:8, fontSize:13, background:'#FAFAFB', outline:'none', minWidth:160 }}>
             {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
@@ -1345,7 +1570,7 @@ function PayrollView({ user }) {
         <div style={{ background:'#fff', border:'1px solid #ECECEF', borderRadius:14, padding:48, textAlign:'center', color:'#9A9AA4' }}>
           <HRIcon name="briefcase" size={36} color="#D1D1D8" />
           <div style={{ marginTop:12, fontWeight:600 }}>No salary slips for {year}</div>
-          {hrAdmin && <div style={{ marginTop:6, fontSize:13 }}>Use "Upload Slip" to add a PDF salary slip for {targetName}.</div>}
+          {canManage && <div style={{ marginTop:6, fontSize:13 }}>Use "Upload Slip" to add a PDF salary slip for {targetName}.</div>}
         </div>
       ) : (
         <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
@@ -1357,7 +1582,7 @@ function PayrollView({ user }) {
                 <div style={{ fontSize:14, fontWeight:700 }}>{fmtMonth(s.month)}</div>
                 <div style={{ fontSize:12, color:'#7E7E88' }}>
                   Uploaded {fmtDate(s.generated_at)} by {s.generated_by_name}
-                  {hrAdmin && s.employee_name && ` · ${s.employee_name}`}
+                  {canManage && s.employee_name && ` · ${s.employee_name}`}
                 </div>
               </div>
               <div style={{ display:'flex', alignItems:'center', gap:8 }}>
@@ -1369,7 +1594,7 @@ function PayrollView({ user }) {
                 ) : (
                   <span style={{ fontSize:12, color:'#9A9AA4' }}>No file</span>
                 )}
-                {hrAdmin && (
+                {canManage && (
                   <button onClick={() => delSlip(s.id)} style={{ background:'none', border:'none', cursor:'pointer', color:'#DC2626', padding:4 }}>
                     <HRIcon name="trash" size={14} />
                   </button>
@@ -1455,10 +1680,13 @@ function UploadSlipModal({ employees, onClose, onSaved }) {
 export default function HRModule({ view, user }) {
   const views = {
     'hr-employees':  <EmployeeDirectory user={user} />,
-    'hr-leaves':     <LeaveManagement   user={user} />,
-    'hr-attendance': <AttendanceView    user={user} />,
-    'hr-documents':  <DocumentsView     user={user} />,
-    'hr-payroll':    <PayrollView       user={user} />,
+    'hr-leaves':     <MyLeavesView user={user} />,
+    'hr-approvals':  <LeaveApprovalsView user={user} />,
+    'hr-leave-calendar':    <LeaveCalendarView user={user} />,
+    'hr-documents':         <DocumentsView user={user} mode="mine" />,
+    'hr-manage-documents':  <DocumentsView user={user} mode="manage" />,
+    'hr-payroll':           <PayrollView user={user} mode="mine" />,
+    'hr-payroll-admin':     <PayrollView user={user} mode="admin" />,
   };
   return views[view] || null;
 }

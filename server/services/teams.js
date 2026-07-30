@@ -143,4 +143,50 @@ async function postTeamsMessage(webhookUrl, userName, contacts, items = []) {
   }
 }
 
-module.exports = { postTeamsMessage, buildAdaptiveCard };
+function buildTaskAssignedCard(task, assignedByName) {
+  const appUrl = process.env.APP_URL || 'http://localhost:5173';
+  const fmtDue = d => d
+    ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : null;
+  const dueLine = fmtDue(task.due_date);
+
+  return {
+    type: 'message',
+    attachments: [{
+      contentType: 'application/vnd.microsoft.card.adaptive',
+      contentUrl: null,
+      content: {
+        $schema: 'https://adaptivecards.io/schemas/adaptive-card.json',
+        type: 'AdaptiveCard',
+        version: '1.2',
+        body: [
+          { type: 'TextBlock', text: '📋 New task assigned to you', weight: 'Bolder', size: 'Medium', wrap: true },
+          { type: 'TextBlock', text: task.title, weight: 'Bolder', size: 'Small', wrap: true, spacing: 'Small' },
+          {
+            type: 'TextBlock',
+            text: `Assigned by ${assignedByName}${dueLine ? ` · Due ${dueLine}` : ''}`,
+            isSubtle: true, size: 'Small', spacing: 'None', wrap: true,
+          },
+        ],
+        actions: [{ type: 'Action.OpenUrl', title: 'Open My Tasks', url: `${appUrl}/my-tasks` }],
+      },
+    }],
+  };
+}
+
+async function postTaskAssignedMessage(webhookUrl, task, assignedByName) {
+  if (!webhookUrl) return;
+  try {
+    const res = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildTaskAssignedCard(task, assignedByName)),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    console.log(`[teams] Task-assigned message sent for task ${task.id}`);
+  } catch (err) {
+    console.error(`[teams] Failed to send task-assigned message for task ${task.id}:`, err.message);
+  }
+}
+
+module.exports = { postTeamsMessage, buildAdaptiveCard, postTaskAssignedMessage };

@@ -291,6 +291,36 @@ router.get('/all-items', verifyJWT, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Server error' }); }
 });
 
+// GET /api/projects/team-items — actionable items assigned to others, for admins (everyone)
+// and managers (their direct reports), across all active projects regardless of ownership.
+router.get('/team-items', verifyJWT, async (req, res) => {
+  const u = req.user;
+  const isAdmin = u.role === 'admin';
+  const isManager = u.hr_role === 'manager';
+  if (!isAdmin && !isManager) return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const params = isAdmin ? [] : [u.id];
+    const scopeFilter = isAdmin ? '' : 'AND ass.manager_id = $1';
+    const { rows } = await pool.query(`
+      SELECT pi.id, pi.title, pi.section_type, pi.status,
+             pi.importance, pi.urgency, pi.due_date, pi.assignee_id,
+             ass.name AS assignee_name, ass.color AS assignee_color,
+             p.id AS project_id, p.title AS project_title, p.color AS project_color,
+             owner.name AS project_owner_name
+      FROM project_items pi
+      JOIN projects p ON p.id = pi.project_id
+      JOIN users ass ON ass.id = pi.assignee_id
+      LEFT JOIN users owner ON owner.id = p.owner_id
+      WHERE p.status = 'active'
+        AND pi.section_type IN ('task','deliverable','followup')
+        AND pi.status NOT IN ('done','delivered','approved')
+        ${scopeFilter}
+      ORDER BY pi.due_date ASC NULLS LAST, pi.created_at ASC
+    `, params);
+    res.json(rows);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Server error' }); }
+});
+
 // GET /api/projects/:id
 router.get('/:id', verifyJWT, async (req, res) => {
   try {

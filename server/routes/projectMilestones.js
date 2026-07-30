@@ -2,18 +2,28 @@ const router = require('express').Router({ mergeParams: true });
 const pool = require('../db/pool');
 const verifyJWT = require('../middleware/auth');
 
-async function checkAccess(projectId, userId) {
+// Project owners/creators get full access. Everyone else gets read-only access if they're
+// assigned at least one item in the project — same rule as projectItems.js's checkAccess,
+// so someone can view milestones for context when opening an item assigned to them.
+async function checkAccess(projectId, userId, { readOnly = false } = {}) {
   const { rows } = await pool.query('SELECT * FROM projects WHERE id=$1', [projectId]);
   if (!rows[0]) return { status: 404, error: 'Not found' };
-  if (rows[0].owner_id !== userId && rows[0].created_by !== userId)
-    return { status: 403, error: 'Forbidden' };
-  return { project: rows[0] };
+  const project = rows[0];
+  if (project.owner_id === userId || project.created_by === userId) return { project };
+  if (readOnly) {
+    const { rows: assigned } = await pool.query(
+      'SELECT 1 FROM project_items WHERE project_id=$1 AND assignee_id=$2 LIMIT 1',
+      [projectId, userId]
+    );
+    if (assigned[0]) return { project };
+  }
+  return { status: 403, error: 'Forbidden' };
 }
 
 // GET /api/projects/:projectId/milestones
 router.get('/', verifyJWT, async (req, res) => {
   try {
-    const result = await checkAccess(req.params.projectId, req.user.id);
+    const result = await checkAccess(req.params.projectId, req.user.id, { readOnly: true });
     if (result.status) return res.status(result.status).json({ error: result.error });
     const { rows } = await pool.query(
       `SELECT * FROM project_milestones WHERE project_id=$1

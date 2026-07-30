@@ -13,6 +13,8 @@ test.describe('Settings', () => {
   });
 
   test('email digest toggle is clickable', async ({ page }) => {
+    await page.getByRole('button', { name: 'Notifications' }).click();
+    await page.waitForTimeout(300);
     // Toggle is a styled div acting as a switch
     const toggle = page.locator('div[style*="border-radius: 12px"]').first()
       .or(page.locator('div[style*="border-radius:12px"]').first());
@@ -24,6 +26,8 @@ test.describe('Settings', () => {
   });
 
   test('currency section renders with INR/USD/GBP/EUR buttons', async ({ page }) => {
+    await page.getByRole('button', { name: 'Currency & Display' }).click();
+    await page.waitForTimeout(300);
     await expect(page.getByText(/currency/i).first()).toBeVisible({ timeout: 6000 });
     await expect(page.getByRole('button', { name: /₹ INR/i }).first()).toBeVisible({ timeout: 5000 });
     await expect(page.getByRole('button', { name: /\$ USD/i }).first()).toBeVisible();
@@ -32,6 +36,8 @@ test.describe('Settings', () => {
   });
 
   test('clicking USD currency button does not crash', async ({ page }) => {
+    await page.getByRole('button', { name: 'Currency & Display' }).click();
+    await page.waitForTimeout(300);
     const usd = page.getByRole('button', { name: /\$ USD/i }).first();
     await expect(usd).toBeVisible({ timeout: 5000 });
     await usd.click();
@@ -55,10 +61,14 @@ test.describe('Settings', () => {
   });
 
   test('custom contact fields section is visible for admin', async ({ page }) => {
-    await expect(page.getByText(/custom contact field/i)).toBeVisible({ timeout: 6000 });
+    await page.getByRole('button', { name: 'Custom Fields' }).click();
+    await page.waitForTimeout(300);
+    await expect(page.getByText(/add extra fields that appear on every contact/i)).toBeVisible({ timeout: 6000 });
   });
 
   test('add a custom field then verify it appears', async ({ page }) => {
+    await page.getByRole('button', { name: 'Custom Fields' }).click();
+    await page.waitForTimeout(300);
     const addBtn = page.getByRole('button', { name: /new field|add field/i }).first();
     if (await addBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
       await addBtn.click();
@@ -71,6 +81,8 @@ test.describe('Settings', () => {
   });
 
   test('save notification settings button works', async ({ page }) => {
+    await page.getByRole('button', { name: 'Notifications' }).click();
+    await page.waitForTimeout(300);
     const saveBtn = page.getByRole('button', { name: /save settings/i });
     await expect(saveBtn).toBeVisible({ timeout: 5000 });
     await saveBtn.click();

@@ -3145,7 +3145,16 @@ function ProjectDetail({ projectId, onBack, currentUserId, isAdmin, users, conta
   };
 
   if (loading) return <div style={{ padding:40, textAlign:'center', color:'#9A9AA4', fontSize:14 }}>Loading…</div>;
-  if (!project) return <div style={{ padding:40, textAlign:'center', color:'#DC2626' }}>Project not found.</div>;
+  if (!project) return (
+    <div style={{ padding:40, textAlign:'center' }}>
+      <div style={{ color:'#DC2626', marginBottom:12 }}>Project not found.</div>
+      <button onClick={onBack}
+        style={{ height:34, padding:'0 16px', borderRadius:8, border:'1.5px solid #E5E5EA', background:'#fff',
+          color:'#5A5A66', fontSize:13, fontWeight:600, cursor:'pointer' }}>
+        Back to projects
+      </button>
+    </div>
+  );
 
   const openCount    = items.filter(it => ['task','deliverable','followup'].includes(it.section_type) &&
     (it.section_type === 'deliverable' ? it.status !== 'delivered' : it.status !== 'done')).length;
@@ -5133,7 +5142,7 @@ function RolePermissionsCollapsible({ items }) {
   );
 }
 
-function UserModal({ editUser, onClose, onSaved }) {
+export function UserModal({ editUser, onClose, onSaved }) {
   const isEdit = !!editUser;
   const [form, setForm] = useState({
     name:    editUser?.name    || '',
@@ -5342,7 +5351,12 @@ export default function CRM() {
   const [projects,        setProjects]        = useState([]);
   const [projectFollowups,  setProjectFollowups]  = useState([]);
   const [focusData,         setFocusData]         = useState(null);
-  const [activeProjectId,    setActiveProjectId]    = useState(null);
+  const [activeProjectId,    setActiveProjectIdRaw] = useState(() => localStorage.getItem('crm_active_project') || null);
+  const setActiveProjectId = useCallback((id) => {
+    setActiveProjectIdRaw(id);
+    if (id) localStorage.setItem('crm_active_project', id);
+    else localStorage.removeItem('crm_active_project');
+  }, []);
   const [selectedTask,       setSelectedTask]       = useState(null);
   const [projectViewMode,    setProjectViewMode]    = useState(() => localStorage.getItem('crm_project_view') || 'grid');
   const setProjectView = (m) => { setProjectViewMode(m); localStorage.setItem('crm_project_view', m); };

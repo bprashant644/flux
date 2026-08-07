@@ -7,6 +7,7 @@ const pool = require('../db/pool');
 const verifyJWT = require('../middleware/auth');
 const requireAdmin = require('../middleware/requireAdmin');
 const { isValidPassword, PASSWORD_RULE_MESSAGE } = require('../utils/password');
+const { isHRAdmin } = require('../utils/hrHelpers');
 
 const AVATAR_DIR = path.join(__dirname, '../uploads/avatars');
 const photoStorage = multer.diskStorage({
@@ -30,8 +31,9 @@ router.get('/', verifyJWT, requireAdmin, async (req, res) => {
   res.json(rows);
 });
 
-// Create user (admin only)
-router.post('/', verifyJWT, requireAdmin, async (req, res) => {
+// Create user (CRM admin or HR admin)
+router.post('/', verifyJWT, async (req, res) => {
+  if (!isHRAdmin(req.user)) return res.status(403).json({ error: 'Forbidden' });
   const { name, email, password, role = 'rep', color = '#5B5BD6', module_access, hr_role } = req.body;
   if (!name || !email || !password) {
     return res.status(400).json({ error: 'name, email, password required' });

@@ -2,6 +2,12 @@ const router = require('express').Router();
 const pool = require('../db/pool');
 const verifyJWT = require('../middleware/auth');
 
+const PROJECT_TAGS = ['Active Deal', 'Internal', 'Admin', 'PoC / Prospect', 'Support', 'Client'];
+function sanitizeTags(tags) {
+  if (!Array.isArray(tags)) return [];
+  return [...new Set(tags.filter(t => PROJECT_TAGS.includes(t)))];
+}
+
 async function checkAccess(projectId, userId) {
   const { rows } = await pool.query('SELECT * FROM projects WHERE id=$1', [projectId]);
   if (!rows[0]) return { status: 404, error: 'Not found' };
@@ -75,15 +81,18 @@ router.get('/', verifyJWT, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Server error' }); }
 });
 
+// GET /api/projects/tags — fixed tag vocabulary (must precede /:id)
+router.get('/tags', verifyJWT, (req, res) => res.json(PROJECT_TAGS));
+
 // POST /api/projects
 router.post('/', verifyJWT, async (req, res) => {
-  const { title, description, contact_id, deal_id, color } = req.body;
+  const { title, description, contact_id, deal_id, color, tags } = req.body;
   if (!title) return res.status(400).json({ error: 'title required' });
   try {
     const { rows } = await pool.query(
-      `INSERT INTO projects (title, description, contact_id, deal_id, color, owner_id, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$6) RETURNING *`,
-      [title, description || null, contact_id || null, deal_id || null, color || '#5B5BD6', req.user.id]
+      `INSERT INTO projects (title, description, contact_id, deal_id, color, tags, owner_id, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$7) RETURNING *`,
+      [title, description || null, contact_id || null, deal_id || null, color || '#5B5BD6', sanitizeTags(tags), req.user.id]
     );
     res.status(201).json(rows[0]);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Server error' }); }
@@ -353,6 +362,7 @@ router.put('/:id', verifyJWT, async (req, res) => {
     for (const k of allowed) {
       if (req.body[k] !== undefined) { fields.push(`${k}=$${i++}`); vals.push(req.body[k] === '' ? null : req.body[k]); }
     }
+    if (req.body.tags !== undefined) { fields.push(`tags=$${i++}`); vals.push(sanitizeTags(req.body.tags)); }
     if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
     fields.push(`updated_at=NOW()`);
     vals.push(req.params.id);

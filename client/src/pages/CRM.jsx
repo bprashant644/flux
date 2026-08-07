@@ -74,6 +74,33 @@ const STAGES = [
   { key:'lost',        label:'Lost',         color:'#DC2626', bg:'#FEF2F2' },
 ];
 const stageByKey = k => STAGES.find(s => s.key === k) || STAGES[0];
+function TagPicker({ value, onChange }) {
+  const toggle = (k) => onChange(value.includes(k) ? value.filter(t => t !== k) : [...value, k]);
+  return (
+    <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+      {PROJECT_TAGS.map(t => {
+        const active = value.includes(t.key);
+        return (
+          <button key={t.key} type="button" onClick={() => toggle(t.key)}
+            style={{ fontSize:11.5, fontWeight:600, padding:'4px 10px', borderRadius:20, cursor:'pointer',
+              border: active ? `1.5px solid ${t.color}` : '1.5px solid #E5E5EA',
+              background: active ? t.bg : '#fff', color: active ? t.color : '#6B6B76' }}>
+            {t.key}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+const PROJECT_TAGS = [
+  { key:'Active Deal',      color:'#16A34A', bg:'#ECFDF3' },
+  { key:'Internal',         color:'#7C3AED', bg:'#F5F0FF' },
+  { key:'Admin',            color:'#64748B', bg:'#F1F5F9' },
+  { key:'PoC / Prospect',   color:'#2563EB', bg:'#EFF4FF' },
+  { key:'Support',          color:'#D97706', bg:'#FEF6E7' },
+  { key:'Client',           color:'#DB2777', bg:'#FDF2F8' },
+];
+const projectTagMeta = k => PROJECT_TAGS.find(t => t.key === k) || { key:k, color:'#5A5A66', bg:'#F2F2F5' };
 
 // ── Currency system ───────────────────────────────────────────────────────────
 const CURRENCIES = {
@@ -3118,7 +3145,16 @@ function ProjectDetail({ projectId, onBack, currentUserId, isAdmin, users, conta
   };
 
   if (loading) return <div style={{ padding:40, textAlign:'center', color:'#9A9AA4', fontSize:14 }}>Loading…</div>;
-  if (!project) return <div style={{ padding:40, textAlign:'center', color:'#DC2626' }}>Project not found.</div>;
+  if (!project) return (
+    <div style={{ padding:40, textAlign:'center' }}>
+      <div style={{ color:'#DC2626', marginBottom:12 }}>Project not found.</div>
+      <button onClick={onBack}
+        style={{ height:34, padding:'0 16px', borderRadius:8, border:'1.5px solid #E5E5EA', background:'#fff',
+          color:'#5A5A66', fontSize:13, fontWeight:600, cursor:'pointer' }}>
+        Back to projects
+      </button>
+    </div>
+  );
 
   const openCount    = items.filter(it => ['task','deliverable','followup'].includes(it.section_type) &&
     (it.section_type === 'deliverable' ? it.status !== 'delivered' : it.status !== 'done')).length;
@@ -3160,6 +3196,10 @@ function ProjectDetail({ projectId, onBack, currentUserId, isAdmin, users, conta
             <Icon name="briefcase" size={12}/>{project.deal_title}
           </span>
         )}
+        {(project.tags || []).map(t => {
+          const tm = projectTagMeta(t);
+          return <span key={t} style={chipStyle(tm.color, tm.bg)}>{t}</span>;
+        })}
         {['completed','archived'].includes(project.status) && (
           <button onClick={() => setShowRetro(true)}
             style={{ display:'flex', alignItems:'center', gap:5, height:32, padding:'0 12px', borderRadius:8,
@@ -3303,6 +3343,7 @@ function EditProjectModal({ project, contacts, deals, onClose, onSaved }) {
     deal_id:     project.deal_id     || '',
     color:       project.color       || '#5B5BD6',
     status:      project.status      || 'active',
+    tags:        project.tags        || [],
   });
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState('');
@@ -3371,6 +3412,9 @@ function EditProjectModal({ project, contacts, deals, onClose, onSaved }) {
               </div>
             </div>
           </div>
+          <div><label style={labelStyle}>Tags</label>
+            <TagPicker value={form.tags} onChange={v=>set('tags',v)}/>
+          </div>
           {error && <div style={{ background:'#FEF2F2', border:'1px solid #FECACA', borderRadius:8, padding:'9px 13px', color:'#DC2626', fontSize:13 }}>{error}</div>}
         </div>
         <div style={{ display:'flex', justifyContent:'flex-end', gap:9, padding:'14px 22px', borderTop:'1px solid #EEEEF1' }}>
@@ -3387,7 +3431,7 @@ function EditProjectModal({ project, contacts, deals, onClose, onSaved }) {
 
 // ── NewProjectModal ───────────────────────────────────────────────────────────
 function NewProjectModal({ contacts, deals, onClose, onSaved }) {
-  const [form, setForm] = useState({ title:'', description:'', contact_id:'', deal_id:'', color:'#5B5BD6' });
+  const [form, setForm] = useState({ title:'', description:'', contact_id:'', deal_id:'', color:'#5B5BD6', tags:[] });
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState('');
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
@@ -3444,6 +3488,9 @@ function NewProjectModal({ contacts, deals, onClose, onSaved }) {
                     border: form.color===c ? '3px solid #19191F' : '3px solid transparent' }}/>
               ))}
             </div>
+          </div>
+          <div><label style={labelStyle}>Tags</label>
+            <TagPicker value={form.tags} onChange={v=>set('tags',v)}/>
           </div>
           {error && <div style={{ background:'#FEF2F2', border:'1px solid #FECACA', borderRadius:8, padding:'9px 13px', color:'#DC2626', fontSize:13 }}>{error}</div>}
         </div>
@@ -4655,13 +4702,31 @@ function ProjectsView({ projects, onSelect, onProjectsChange, currentUserId, isA
   const [showNew,        setShowNew]        = useState(false);
   const [showReview,     setShowReview]     = useState(false);
   const [showAddTask,    setShowAddTask]    = useState(false);
-  const [filterStatus,   setFilterStatus]   = useState('active');
+  const [filterStatus,   setFilterStatusRaw] = useState(() => localStorage.getItem('crm_project_status_filter') || 'active');
+  const setFilterStatus = (v) => { setFilterStatusRaw(v); localStorage.setItem('crm_project_status_filter', v); };
+  const [sortMode,       setSortModeRaw]    = useState(() => localStorage.getItem('crm_project_sort') || 'priority'); // 'priority' | 'alpha'
+  const setSortMode = (updater) => setSortModeRaw(prev => {
+    const next = typeof updater === 'function' ? updater(prev) : updater;
+    localStorage.setItem('crm_project_sort', next);
+    return next;
+  });
+  const [tagFilter,      setTagFilterRaw]   = useState(() => {
+    try { const s = localStorage.getItem('crm_project_tag_filter'); return s ? JSON.parse(s) : []; } catch { return []; }
+  });
+  const setTagFilter = (updater) => setTagFilterRaw(prev => {
+    const next = typeof updater === 'function' ? updater(prev) : updater;
+    localStorage.setItem('crm_project_tag_filter', JSON.stringify(next));
+    return next;
+  });
+  const toggleTagFilter = (t) => setTagFilter(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]);
   const [todayItems,     setTodayItems]     = useState([]);
   const [todayLoaded, setTodayLoaded] = useState(false);
   const STATUS_ORDER = { active: 0, completed: 1, archived: 2 };
   const filtered = projects
     .filter(p => filterStatus === 'all' || p.status === filterStatus)
+    .filter(p => tagFilter.length === 0 || tagFilter.some(t => (p.tags || []).includes(t)))
     .sort((a, b) => {
+      if (sortMode === 'alpha') return a.title.localeCompare(b.title);
       const sd = (STATUS_ORDER[a.status] ?? 1) - (STATUS_ORDER[b.status] ?? 1);
       if (sd !== 0) return sd;
       const od = Number(b.overdue_count) - Number(a.overdue_count);
@@ -4674,6 +4739,17 @@ function ProjectsView({ projects, onSelect, onProjectsChange, currentUserId, isA
       if (b.earliest_due_date) return 1;
       return a.title.localeCompare(b.title);
     });
+  const sortToggleBtn = (compact) => (
+    <button onClick={() => setSortMode(m => m === 'alpha' ? 'priority' : 'alpha')}
+      title={sortMode === 'alpha' ? 'Sorted A–Z — click for priority order' : 'Sort A–Z'}
+      style={{ height: compact ? 28 : 34, padding: compact ? '0 8px' : '0 11px', borderRadius:8, flexShrink:0, cursor:'pointer',
+        border: `1.5px solid ${sortMode === 'alpha' ? ACCENT : '#E5E5EA'}`,
+        background: sortMode === 'alpha' ? `${ACCENT}18` : '#fff',
+        color: sortMode === 'alpha' ? ACCENT : '#6B6B76',
+        fontSize: compact ? 11 : 12, fontWeight:700, display:'flex', alignItems:'center', justifyContent:'center' }}>
+      A–Z
+    </button>
+  );
 
   // Load today's focus queue on mount — pinned plan items plus overdue/today across projects
   useEffect(() => {
@@ -4711,6 +4787,7 @@ function ProjectsView({ projects, onSelect, onProjectsChange, currentUserId, isA
             {smBtn(() => onViewModeChange('grid'),     'grid',    'Grid view',     false)}
             {smBtn(() => onViewModeChange('split'),    'sidebar', 'Split view',    true)}
             {smBtn(() => onViewModeChange('quadrant'), 'target',  'Quadrant view', false)}
+            {sortToggleBtn(true)}
             {smBtn(() => setShowNew(true),          'plus',    'New project', false)}
             {onCollapseList && (
               <button onClick={onCollapseList} title="Collapse list"
@@ -4732,6 +4809,20 @@ function ProjectsView({ projects, onSelect, onProjectsChange, currentUserId, isA
                     background: isActive ? ACCENT : '#F6F6F9', color: isActive ? '#fff' : '#5A5A66' }}>
                   {f.charAt(0).toUpperCase() + f.slice(1)}{' '}
                   <span style={{ opacity:0.55 }}>{count}</span>
+                </button>
+              );
+            })}
+          </div>
+          {/* Tag filter pills */}
+          <div style={{ display:'flex', gap:4, overflowX:'auto', marginTop:6 }}>
+            {PROJECT_TAGS.map(t => {
+              const isActive = tagFilter.includes(t.key);
+              return (
+                <button key={t.key} onClick={() => toggleTagFilter(t.key)}
+                  style={{ padding:'3px 9px', borderRadius:20, fontSize:10.5, fontWeight:600, flexShrink:0, whiteSpace:'nowrap',
+                    border: isActive ? `1.5px solid ${t.color}` : '1.5px solid #E5E5EA',
+                    background: isActive ? t.bg : '#fff', color: isActive ? t.color : '#8A8A94' }}>
+                  {t.key}
                 </button>
               );
             })}
@@ -4777,6 +4868,14 @@ function ProjectsView({ projects, onSelect, onProjectsChange, currentUserId, isA
                     )}
                     {p.owner_name && <Avatar name={p.owner_name} color={p.owner_color} size={18} style={{ marginLeft:'auto' }}/>}
                   </div>
+                  {p.tags && p.tags.length > 0 && (
+                    <div style={{ display:'flex', gap:4, flexWrap:'wrap', marginTop:6 }}>
+                      {p.tags.map(t => {
+                        const tm = projectTagMeta(t);
+                        return <span key={t} style={{ fontSize:10, fontWeight:700, padding:'2px 6px', borderRadius:5, color:tm.color, background:tm.bg }}>{t}</span>;
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -4859,6 +4958,7 @@ function ProjectsView({ projects, onSelect, onProjectsChange, currentUserId, isA
           );
         })}
         <div style={{ flex:1 }}/>
+        {sortToggleBtn(false)}
         {/* View mode toggles */}
         <div style={{ display:'flex', gap:4 }}>
           {[{ m:'grid', icon:'grid', title:'Grid view' }, { m:'split', icon:'sidebar', title:'Split view' }, { m:'quadrant', icon:'target', title:'Quadrant view' },
@@ -4886,6 +4986,28 @@ function ProjectsView({ projects, onSelect, onProjectsChange, currentUserId, isA
             background:ACCENT, color:'#fff', fontSize:13.5, fontWeight:700, border:'none', cursor:'pointer' }}>
           <Icon name="plus" size={16}/>New project
         </button>
+      </div>
+
+      {/* Tag filter pills */}
+      <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:20, flexWrap:'wrap' }}>
+        <span style={{ fontSize:11.5, fontWeight:700, color:'#9A9AA4', textTransform:'uppercase', letterSpacing:'0.04em' }}>Tags</span>
+        {PROJECT_TAGS.map(t => {
+          const isActive = tagFilter.includes(t.key);
+          return (
+            <button key={t.key} onClick={() => toggleTagFilter(t.key)}
+              style={{ padding:'4px 11px', borderRadius:20, fontSize:12, fontWeight:600, whiteSpace:'nowrap',
+                border: isActive ? `1.5px solid ${t.color}` : '1.5px solid #E5E5EA',
+                background: isActive ? t.bg : '#fff', color: isActive ? t.color : '#6B6B76' }}>
+              {t.key}
+            </button>
+          );
+        })}
+        {tagFilter.length > 0 && (
+          <button onClick={() => setTagFilter([])}
+            style={{ fontSize:11.5, fontWeight:600, color:'#9A9AA4', background:'none', border:'none', cursor:'pointer', padding:'4px 6px' }}>
+            Clear
+          </button>
+        )}
       </div>
 
       {/* Project grid */}
@@ -4940,6 +5062,10 @@ function ProjectsView({ projects, onSelect, onProjectsChange, currentUserId, isA
                         <Icon name="briefcase" size={11}/>{p.deal_title}
                       </span>
                     )}
+                    {p.tags && p.tags.map(t => {
+                      const tm = projectTagMeta(t);
+                      return <span key={t} style={{ fontSize:11, fontWeight:700, padding:'3px 8px', borderRadius:6, color:tm.color, background:tm.bg }}>{t}</span>;
+                    })}
                     <div style={{ flex:1 }}/>
                     <span style={{ fontSize:11.5, color:'#9A9AA4' }}>{p.item_count} open item{p.item_count!==1?'s':''}</span>
                     {p.owner_name && <Avatar name={p.owner_name} color={p.owner_color} size={22}/>}
@@ -5016,7 +5142,7 @@ function RolePermissionsCollapsible({ items }) {
   );
 }
 
-function UserModal({ editUser, onClose, onSaved }) {
+export function UserModal({ editUser, onClose, onSaved }) {
   const isEdit = !!editUser;
   const [form, setForm] = useState({
     name:    editUser?.name    || '',
@@ -5225,7 +5351,12 @@ export default function CRM() {
   const [projects,        setProjects]        = useState([]);
   const [projectFollowups,  setProjectFollowups]  = useState([]);
   const [focusData,         setFocusData]         = useState(null);
-  const [activeProjectId,    setActiveProjectId]    = useState(null);
+  const [activeProjectId,    setActiveProjectIdRaw] = useState(() => localStorage.getItem('crm_active_project') || null);
+  const setActiveProjectId = useCallback((id) => {
+    setActiveProjectIdRaw(id);
+    if (id) localStorage.setItem('crm_active_project', id);
+    else localStorage.removeItem('crm_active_project');
+  }, []);
   const [selectedTask,       setSelectedTask]       = useState(null);
   const [projectViewMode,    setProjectViewMode]    = useState(() => localStorage.getItem('crm_project_view') || 'grid');
   const setProjectView = (m) => { setProjectViewMode(m); localStorage.setItem('crm_project_view', m); };

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import GroupedByEmployee from '../components/GroupedByEmployee';
+import { UserModal } from './CRM';
 
 const ACCENT = '#5B5BD6';
 const HR_PATHS = {
@@ -97,6 +98,7 @@ function EmployeeDirectory({ user }) {
   const [selected, setSelected]     = useState(null);
   const [editing, setEditing]       = useState(false);
   const [showPCR, setShowPCR]       = useState(false); // profile change request
+  const [showAddUser, setShowAddUser] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -123,7 +125,17 @@ function EmployeeDirectory({ user }) {
     <div>
       <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:20 }}>
         <h2 style={{ fontSize:20, fontWeight:800, letterSpacing:'-0.02em', flex:1 }}>Employees</h2>
+        {isHRAdmin(user) && (
+          <button onClick={() => setShowAddUser(true)}
+            style={{ display:'flex', alignItems:'center', gap:6, height:36, padding:'0 16px', borderRadius:9, background:ACCENT, color:'#fff', fontSize:13, fontWeight:700, border:'none', cursor:'pointer' }}>
+            <HRIcon name="plus" size={15} />Add User
+          </button>
+        )}
       </div>
+
+      {showAddUser && (
+        <UserModal onClose={() => setShowAddUser(false)} onSaved={load} />
+      )}
 
       {/* Filters */}
       <div style={{ display:'flex', gap:10, marginBottom:18, flexWrap:'wrap' }}>
@@ -1207,6 +1219,49 @@ const dlFile = async (endpoint, originalName) => {
   } catch { alert('Download failed'); }
 };
 
+function DocumentPreviewModal({ doc, onClose }) {
+  const [blobUrl, setBlobUrl] = useState(null);
+  const [error, setError]     = useState(false);
+  const isPdf = /\.pdf$/i.test(doc.file_name || '');
+
+  useEffect(() => {
+    let url;
+    api.get(`/hr/documents/file/${doc.file_path}`, { responseType: 'blob' })
+      .then(r => { url = URL.createObjectURL(r.data); setBlobUrl(url); })
+      .catch(() => setError(true));
+    return () => { if (url) URL.revokeObjectURL(url); };
+  }, [doc.file_path]);
+
+  return (
+    <div style={{ position:'fixed', inset:0, zIndex:60, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
+      <div onClick={onClose} style={{ position:'absolute', inset:0, background:'rgba(20,20,30,.34)' }} />
+      <div style={{ position:'relative', width:'min(900px, 92vw)', background:'#fff', borderRadius:16, boxShadow:'0 24px 60px rgba(20,20,30,.24)', overflow:'hidden' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'16px 20px', borderBottom:'1px solid #EEEEF1' }}>
+          <div style={{ fontSize:15, fontWeight:700 }}>{doc.title}</div>
+          <button onClick={onClose} style={{ color:'#8A8A94', background:'none', border:'none', cursor:'pointer' }}><HRIcon name="x" size={18} /></button>
+        </div>
+        <div style={{ padding:20 }}>
+          {error ? (
+            <div style={{ padding:32, textAlign:'center', color:'#DC2626', fontSize:13 }}>Failed to load document.</div>
+          ) : !blobUrl ? (
+            <div style={{ padding:32, textAlign:'center', color:'#9A9AA4', fontSize:13 }}>Loading…</div>
+          ) : isPdf ? (
+            <iframe src={blobUrl} title={doc.title} style={{ width:'100%', height:'75vh', border:'none', borderRadius:8 }} />
+          ) : (
+            <div style={{ padding:32, textAlign:'center' }}>
+              <div style={{ color:'#7E7E88', fontSize:13, marginBottom:16 }}>Preview isn't available for this file type.</div>
+              <button onClick={() => dlFile(`/hr/documents/file/${doc.file_path}`, doc.file_name)}
+                style={{ display:'inline-flex', alignItems:'center', gap:6, height:36, padding:'0 16px', borderRadius:9, background:'#EFF4FF', color:'#2563EB', fontSize:13, fontWeight:600, border:'1px solid #BFDBFE', cursor:'pointer' }}>
+                <HRIcon name="download" size={14} />Download instead
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // mode: 'mine' (self-only — no upload/delete/ack-tracking, everyone including admins) |
 //       'manage' (HR Admin only — all employees' assigned docs + full company-doc management)
 function DocumentsView({ user, mode = 'mine' }) {
@@ -1216,6 +1271,7 @@ function DocumentsView({ user, mode = 'mine' }) {
   const [showNew, setShowNew] = useState(false);
   const [ackDoc, setAckDoc]   = useState(null); // doc for "who has read" modal
   const [acks, setAcks]       = useState([]);
+  const [previewDoc, setPreviewDoc] = useState(null);
   const canManage = mode === 'manage' && isHRAdmin(user);
 
   const load = useCallback(async () => {
@@ -1274,9 +1330,9 @@ function DocumentsView({ user, mode = 'mine' }) {
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:8, flexShrink:0 }}>
           {d.file_name && (
-            <button onClick={() => dlFile(`/hr/documents/file/${d.file_path}`, d.file_name)}
+            <button onClick={() => setPreviewDoc(d)}
               style={{ display:'flex', alignItems:'center', gap:4, height:32, padding:'0 12px', borderRadius:8, background:'#EFF4FF', color:'#2563EB', fontSize:12, fontWeight:600, border:'1px solid #BFDBFE', cursor:'pointer' }}>
-              <HRIcon name="download" size={13} />Download
+              <HRIcon name="eye" size={13} />View
             </button>
           )}
           {d.doc_category === 'company' && (
@@ -1351,6 +1407,8 @@ function DocumentsView({ user, mode = 'mine' }) {
       ) : visible.map(d => <DocCard key={d.id} d={d} />)}
 
       {showNew && <UploadDocModal onClose={() => setShowNew(false)} onSaved={load} />}
+
+      {previewDoc && <DocumentPreviewModal doc={previewDoc} onClose={() => setPreviewDoc(null)} />}
 
       {/* Who Has Read modal */}
       {ackDoc && (

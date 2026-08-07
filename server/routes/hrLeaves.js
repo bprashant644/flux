@@ -225,10 +225,11 @@ router.post('/requests', verify, async (req, res) => {
     return res.status(400).json({ error: 'leave_type_id, start_date, end_date, days required' });
 
   const targetUserId = user_id && isHRAdmin(req.user) ? user_id : req.user.id;
-  const isAdhocAdminGrant = isHRAdmin(req.user) && user_id && user_id !== req.user.id;
+  const isAdhocAdminGrant = isHRAdmin(req.user) && !!user_id;
 
-  // Admins can backdate a grant to log leave that already happened for someone else;
-  // self-service requests (including an admin applying for their own leave) must be today or later.
+  // Admins can backdate a grant made via the Adhoc form (always sends user_id, even for
+  // themselves) to log leave that already happened; self-service "Apply Leave" requests
+  // (which never send user_id) must still be today or later.
   if (!isAdhocAdminGrant && start_date < todayDateStr())
     return res.status(400).json({ error: 'Start date cannot be in the past' });
   if (end_date < start_date)

@@ -23,11 +23,16 @@ const uploadPhoto = multer({
   fileFilter: (req, file, cb) => cb(null, /^image\//.test(file.mimetype)),
 });
 
-// List all users (admin only)
-router.get('/', verifyJWT, requireAdmin, async (req, res) => {
-  const { rows } = await pool.query(
-    'SELECT id, name, email, role, hr_role, manager_id, color, photo_url, two_factor_enabled, teams_webhook_url, email_digest, module_access, created_at FROM users ORDER BY name'
-  );
+// List all users. Admins get full profile detail; everyone else gets just enough
+// (id/name/color/photo) to populate assignee/owner pickers across contacts and projects.
+router.get('/', verifyJWT, async (req, res) => {
+  if (req.user.role === 'admin') {
+    const { rows } = await pool.query(
+      'SELECT id, name, email, role, hr_role, manager_id, color, photo_url, two_factor_enabled, teams_webhook_url, email_digest, module_access, created_at FROM users ORDER BY name'
+    );
+    return res.json(rows);
+  }
+  const { rows } = await pool.query('SELECT id, name, color, photo_url FROM users ORDER BY name');
   res.json(rows);
 });
 

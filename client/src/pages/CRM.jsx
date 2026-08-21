@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api';
@@ -1784,8 +1784,19 @@ function SettingsPage({ user, onUpdate, isAdmin, customFieldDefs, reloadCustomFi
 }
 
 // ── AddItemModal ─────────────────────────────────────────────────────────────
-function AddItemModal({ projectId, milestones, users, contacts, defaults = {}, editItem, onClose, onSaved, hasCrmContact, readOnly = false }) {
+function AddItemModal({ projectId, milestones, users, contacts, defaults = {}, editItem, onClose, onSaved, onDelete, hasCrmContact, readOnly = false }) {
   const isEdit = !!editItem;
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const doDelete = async () => {
+    setDeleting(true);
+    try {
+      await onDelete();
+      onClose();
+    } finally {
+      setDeleting(false);
+    }
+  };
   const [form, setForm] = useState({
     section_type:        defaults.section_type        || editItem?.section_type        || 'task',
     title:               editItem?.title               || defaults.title               || '',
@@ -2139,6 +2150,19 @@ function AddItemModal({ projectId, milestones, users, contacts, defaults = {}, e
             </div>
           </div>
 
+          {isEdit && form.section_type !== 'deliverable' && (
+            <div>
+              <label style={labelStyle}>Status</label>
+              <button onClick={() => saveStatus(form.status === 'done' ? 'open' : 'done')} disabled={saving}
+                style={{ display:'flex', alignItems:'center', gap:8, height:38, padding:'0 16px', borderRadius:9,
+                  background: form.status === 'done' ? '#ECFDF3' : '#F2F2F5', color: form.status === 'done' ? '#16A34A' : '#5A5A66',
+                  fontSize:13, fontWeight:700, border: form.status === 'done' ? '1px solid #86EFAC' : 'none', cursor:'pointer', opacity:saving?0.7:1 }}>
+                <Icon name="check" size={14} />
+                {form.status === 'done' ? 'Completed' : 'Mark as complete'}
+              </button>
+            </div>
+          )}
+
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
             <div>
               <label style={labelStyle}>Milestone</label>
@@ -2221,14 +2245,42 @@ function AddItemModal({ projectId, milestones, users, contacts, defaults = {}, e
             </div>
           )}
         </div>
-        <div style={{ display:'flex', justifyContent:'flex-end', gap:9, padding:'14px 22px', borderTop:'1px solid #EEEEF1' }}>
-          <button onClick={onClose} style={{ height:38, padding:'0 16px', borderRadius:9, fontSize:13.5, fontWeight:600, color:'#5A5A66', background:'#F2F2F5', border:'none', cursor:'pointer' }}>Cancel</button>
-          <button onClick={save} disabled={saving}
-            style={{ height:38, padding:'0 20px', borderRadius:9, fontSize:13.5, fontWeight:700, background:ACCENT, color:'#fff', opacity:saving?0.7:1, border:'none', cursor:'pointer' }}>
-            {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Add item'}
-          </button>
+        <div style={{ display:'flex', alignItems:'center', justifyContent: isEdit && onDelete ? 'space-between' : 'flex-end', gap:9, padding:'14px 22px', borderTop:'1px solid #EEEEF1' }}>
+          {isEdit && onDelete && (
+            <button onClick={() => setShowDeleteConfirm(true)}
+              style={{ width:38, height:38, borderRadius:9, border:'1px solid #FECACA', display:'flex', alignItems:'center', justifyContent:'center', color:'#DC2626', background:'#FEF2F2', cursor:'pointer', flexShrink:0 }}
+              title="Delete item">
+              <Icon name="trash" size={15}/>
+            </button>
+          )}
+          <div style={{ display:'flex', gap:9 }}>
+            <button onClick={onClose} style={{ height:38, padding:'0 16px', borderRadius:9, fontSize:13.5, fontWeight:600, color:'#5A5A66', background:'#F2F2F5', border:'none', cursor:'pointer' }}>Cancel</button>
+            <button onClick={save} disabled={saving}
+              style={{ height:38, padding:'0 20px', borderRadius:9, fontSize:13.5, fontWeight:700, background:ACCENT, color:'#fff', opacity:saving?0.7:1, border:'none', cursor:'pointer' }}>
+              {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Add item'}
+            </button>
+          </div>
         </div>
       </div>
+
+      {showDeleteConfirm && (
+        <div style={{ position:'fixed', inset:0, zIndex:70, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
+          <div onClick={() => setShowDeleteConfirm(false)} style={{ position:'absolute', inset:0, background:'rgba(20,20,30,0.34)' }}/>
+          <div style={{ position:'relative', width:360, background:'#fff', borderRadius:16, padding:'26px', boxShadow:'0 16px 48px rgba(20,20,30,0.22)', textAlign:'center' }}>
+            <div style={{ fontSize:16, fontWeight:700, marginBottom:10 }}>Delete item?</div>
+            <div style={{ fontSize:13.5, color:'#7E7E88', marginBottom:22 }}>
+              "<strong>{form.title}</strong>" will be permanently deleted.
+            </div>
+            <div style={{ display:'flex', gap:10, justifyContent:'center' }}>
+              <button onClick={() => setShowDeleteConfirm(false)} style={{ height:38, padding:'0 18px', borderRadius:9, background:'#F2F2F5', color:'#5A5A66', fontSize:14, fontWeight:600, border:'none', cursor:'pointer' }}>Cancel</button>
+              <button onClick={doDelete} disabled={deleting}
+                style={{ height:38, padding:'0 18px', borderRadius:9, background:'#DC2626', color:'#fff', fontSize:14, fontWeight:700, border:'none', cursor:'pointer', opacity:deleting?0.7:1 }}>
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -3290,7 +3342,8 @@ function ProjectDetail({ projectId, onBack, currentUserId, isAdmin, users, conta
           editItem={editingItem}
           hasCrmContact={!!project.contact_id}
           onClose={() => { setShowAddItem(false); setEditingItem(null); }}
-          onSaved={() => { loadItems(); setEditingItem(null); onProjectUpdated?.(); }}/>
+          onSaved={() => { loadItems(); setEditingItem(null); onProjectUpdated?.(); }}
+          onDelete={editingItem ? () => deleteItem(editingItem.id) : undefined}/>
       )}
 
       {showEditProject && (
@@ -3935,6 +3988,10 @@ function ProjectsDashboard({ projects, onSelect, users, contacts, currentUserId,
           hasCrmContact={!!projects.find(p => p.id === modalItem.projectId)?.contact_id}
           onClose={() => setModalItem(null)}
           onSaved={onItemSaved}
+          onDelete={modalItem.readOnly ? undefined : async () => {
+            await api.delete(`/projects/${modalItem.projectId}/items/${modalItem.item.id}`);
+            onItemSaved();
+          }}
         />
       )}
       {modalLoading && !modalItem && (
@@ -4719,12 +4776,45 @@ function ProjectsView({ projects, onSelect, onProjectsChange, currentUserId, isA
     return next;
   });
   const toggleTagFilter = (t) => setTagFilter(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]);
+  const [hideIdle, setHideIdleRaw] = useState(() => localStorage.getItem('crm_project_hide_idle') === '1');
+  const setHideIdle = (v) => { setHideIdleRaw(v); localStorage.setItem('crm_project_hide_idle', v ? '1' : '0'); };
+  const [assigneeFilter, setAssigneeFilterRaw] = useState(() => localStorage.getItem('crm_project_assignee_filter') || '');
+  const setAssigneeFilter = (v) => { setAssigneeFilterRaw(v); localStorage.setItem('crm_project_assignee_filter', v); };
+  const [assigneeItems, setAssigneeItems] = useState([]);
   const [todayItems,     setTodayItems]     = useState([]);
   const [todayLoaded, setTodayLoaded] = useState(false);
   const STATUS_ORDER = { active: 0, completed: 1, archived: 2 };
-  const filtered = projects
+
+  // Load per-project assignee sets (for the Assignee filter) — scoped to the same
+  // owner_id/created_by projects this view already shows. Uses item-assignees (not
+  // all-items) so completed/archived projects and done items still populate the filter.
+  useEffect(() => {
+    api.get('/projects/item-assignees').then(r => setAssigneeItems(r.data || [])).catch(() => setAssigneeItems([]));
+  }, []);
+
+  const projectAssigneeMap = useMemo(() => {
+    const m = new Map();
+    for (const it of assigneeItems) {
+      if (!it.assignee_id) continue;
+      if (!m.has(it.project_id)) m.set(it.project_id, new Set());
+      m.get(it.project_id).add(it.assignee_id);
+    }
+    return m;
+  }, [assigneeItems]);
+
+  const preAssigneeFiltered = projects
     .filter(p => filterStatus === 'all' || p.status === filterStatus)
     .filter(p => tagFilter.length === 0 || tagFilter.some(t => (p.tags || []).includes(t)))
+    .filter(p => !hideIdle || +p.item_count > 0);
+
+  const assigneeOptions = useMemo(() => {
+    const ids = new Set();
+    for (const p of preAssigneeFiltered) { const s = projectAssigneeMap.get(p.id); if (s) for (const id of s) ids.add(id); }
+    return users.filter(u => ids.has(u.id));
+  }, [preAssigneeFiltered, projectAssigneeMap, users]);
+
+  const filtered = preAssigneeFiltered
+    .filter(p => !assigneeFilter || projectAssigneeMap.get(p.id)?.has(assigneeFilter))
     .sort((a, b) => {
       if (sortMode === 'alpha') return a.title.localeCompare(b.title);
       const sd = (STATUS_ORDER[a.status] ?? 1) - (STATUS_ORDER[b.status] ?? 1);
@@ -4826,7 +4916,21 @@ function ProjectsView({ projects, onSelect, onProjectsChange, currentUserId, isA
                 </button>
               );
             })}
+            <button onClick={() => setHideIdle(!hideIdle)}
+              style={{ padding:'3px 9px', borderRadius:20, fontSize:10.5, fontWeight:600, flexShrink:0, whiteSpace:'nowrap',
+                border: hideIdle ? '1.5px solid #6B6B76' : '1.5px solid #E5E5EA',
+                background: hideIdle ? '#F2F2F5' : '#fff', color: hideIdle ? '#19191F' : '#8A8A94' }}>
+              Active tasks only
+            </button>
           </div>
+          {assigneeOptions.length > 0 && (
+            <select value={assigneeFilter} onChange={e => setAssigneeFilter(e.target.value)}
+              style={{ marginTop:6, width:'100%', height:26, padding:'0 8px', borderRadius:20, fontSize:10.5, fontWeight:600,
+                border:'1.5px solid #E5E5EA', background:'#fff', color:'#5A5A66', cursor:'pointer' }}>
+              <option value="">All assignees</option>
+              {assigneeOptions.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          )}
         </div>
 
         {/* Project cards list */}
@@ -5007,6 +5111,20 @@ function ProjectsView({ projects, onSelect, onProjectsChange, currentUserId, isA
             style={{ fontSize:11.5, fontWeight:600, color:'#9A9AA4', background:'none', border:'none', cursor:'pointer', padding:'4px 6px' }}>
             Clear
           </button>
+        )}
+        <button onClick={() => setHideIdle(!hideIdle)}
+          style={{ padding:'4px 11px', borderRadius:20, fontSize:12, fontWeight:600, whiteSpace:'nowrap',
+            border: hideIdle ? '1.5px solid #6B6B76' : '1.5px solid #E5E5EA',
+            background: hideIdle ? '#F2F2F5' : '#fff', color: hideIdle ? '#19191F' : '#6B6B76' }}>
+          Active tasks only
+        </button>
+        {assigneeOptions.length > 0 && (
+          <select value={assigneeFilter} onChange={e => setAssigneeFilter(e.target.value)}
+            style={{ height:30, padding:'0 10px', borderRadius:20, fontSize:12, fontWeight:600,
+              border:'1.5px solid #E5E5EA', background:'#fff', color:'#5A5A66', cursor:'pointer' }}>
+            <option value="">All assignees</option>
+            {assigneeOptions.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+          </select>
         )}
       </div>
 
@@ -5384,10 +5502,9 @@ export default function CRM() {
   }, []);
 
   const loadUsers = useCallback(async () => {
-    if (!isAdmin) return;
     const r = await api.get('/users');
     setUsers(r.data);
-  }, [isAdmin]);
+  }, []);
 
   const loadDeals = useCallback(async () => {
     const r = await api.get('/deals');
@@ -5425,9 +5542,8 @@ export default function CRM() {
     loadProjects();
     loadProjectFollowups();
     loadFocus();
-    if (isAdmin) loadUsers();
-    else setUsers([{ id: user.id, name: user.name, color: user.color }]);
-  }, [isAdmin, user.id, loadContacts, loadUsers]);
+    loadUsers();
+  }, [loadContacts, loadUsers]);
 
   useEffect(() => {
     if (view !== 'projects') setActiveProjectId(null);

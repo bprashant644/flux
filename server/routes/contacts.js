@@ -4,17 +4,19 @@ const verifyJWT = require('../middleware/auth');
 const { createOutlookEvent, deleteOutlookEvent } = require('../services/graph');
 
 // Build the SELECT: value is masked for contacts not owned by current user (unless admin).
-// effective_value = sum of active (non-won/non-lost) deals if any exist, else manual c.value.
+// effective_value = sum of active (non-won/non-lost) deals if the contact has any deals at all
+// (0 once they're all won/lost), else falls back to the manual c.value.
 function contactSelect(userId, isAdmin) {
-  const dFilter = isAdmin
-    ? `d.contact_id=c.id AND d.stage NOT IN ('won','lost')`
-    : `d.contact_id=c.id AND d.owner_id='${userId}' AND d.stage NOT IN ('won','lost')`;
+  const cFilter = isAdmin
+    ? `d.contact_id=c.id`
+    : `d.contact_id=c.id AND d.owner_id='${userId}'`;
+  const dFilter = `${cFilter} AND d.stage NOT IN ('won','lost')`;
 
   // Cast to FLOAT8: SUM returns BIGINT which pg returns as a string, causing JS string
   // concatenation instead of numeric addition on the client side.
   const activeDealSum  = `(SELECT COALESCE(SUM(d.value),0)::float8 FROM deals d WHERE ${dFilter})`;
-  const hasActiveDeal  = `EXISTS (SELECT 1 FROM deals d WHERE ${dFilter})`;
-  const effFormula     = `(CASE WHEN ${hasActiveDeal} THEN ${activeDealSum} ELSE c.value END)::float8`;
+  const hasAnyDeal     = `EXISTS (SELECT 1 FROM deals d WHERE ${cFilter})`;
+  const effFormula     = `(CASE WHEN ${hasAnyDeal} THEN ${activeDealSum} ELSE c.value END)::float8`;
 
   const valueExpr = isAdmin
     ? 'c.value'

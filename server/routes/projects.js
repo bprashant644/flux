@@ -300,6 +300,24 @@ router.get('/all-items', verifyJWT, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Server error' }); }
 });
 
+// GET /api/projects/item-assignees — project_id/assignee_id pairs across ALL of the current
+// user's projects (any status, any item status/type) — used to populate assignee filter
+// dropdowns. Deliberately unfiltered by status, unlike /all-items, so filters stay accurate
+// for completed/archived projects and already-done items.
+router.get('/item-assignees', verifyJWT, async (req, res) => {
+  const uid = req.user.id;
+  try {
+    const { rows } = await pool.query(`
+      SELECT DISTINCT pi.project_id, pi.assignee_id
+      FROM project_items pi
+      JOIN projects p ON p.id = pi.project_id
+      WHERE (p.owner_id = $1 OR p.created_by = $1)
+        AND pi.assignee_id IS NOT NULL
+    `, [uid]);
+    res.json(rows);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Server error' }); }
+});
+
 // GET /api/projects/team-items — actionable items assigned to others, for admins (everyone)
 // and managers (their direct reports), across all active projects regardless of ownership.
 router.get('/team-items', verifyJWT, async (req, res) => {

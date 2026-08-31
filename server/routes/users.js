@@ -9,7 +9,8 @@ const requireAdmin = require('../middleware/requireAdmin');
 const { isValidPassword, PASSWORD_RULE_MESSAGE } = require('../utils/password');
 const { isHRAdmin } = require('../utils/hrHelpers');
 
-const AVATAR_DIR = path.join(__dirname, '../uploads/avatars');
+const { resolveUploadDir } = require('../utils/uploadDir');
+const AVATAR_DIR = resolveUploadDir('avatars');
 const photoStorage = multer.diskStorage({
   destination: AVATAR_DIR,
   filename: (req, file, cb) => {
@@ -36,7 +37,9 @@ router.get('/', verifyJWT, async (req, res) => {
   res.json(rows);
 });
 
-// Create user (CRM admin or HR admin)
+// Create user (CRM admin or HR admin) — this is the invite flow: the new user always
+// lands in the inviter's own org (req.user.org_id), never an arbitrary one. Invited users
+// are pre-verified (an admin created them directly) — no confirmation email needed.
 router.post('/', verifyJWT, async (req, res) => {
   if (!isHRAdmin(req.user)) return res.status(403).json({ error: 'Forbidden' });
   const { name, email, password, role = 'rep', color = '#5B5BD6', module_access, hr_role } = req.body;
@@ -46,27 +49,37 @@ router.post('/', verifyJWT, async (req, res) => {
   if (!isValidPassword(password)) {
     return res.status(400).json({ error: PASSWORD_RULE_MESSAGE });
   }
+  const client = await pool.connect();
   try {
+    await client.query('BEGIN');
     const hash = await bcrypt.hash(password, 10);
     const ma = module_access || { crm: false, projects: false, hr: true };
     const effectiveHrRole = role === 'admin' ? null : (hr_role || 'employee');
-    const { rows } = await pool.query(
-      `INSERT INTO users (name, email, password_hash, role, color, module_access, hr_role)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+    const { rows } = await client.query(
+      `INSERT INTO users (name, email, password_hash, role, color, module_access, hr_role, email_verified)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE)
        RETURNING id, name, email, role, hr_role, color, module_access, created_at`,
       [name, email.toLowerCase().trim(), hash, role, color, JSON.stringify(ma), effectiveHrRole]
     );
     if (role !== 'admin') {
-      await pool.query(
+      await client.query(
         'INSERT INTO employee_profiles (user_id) VALUES ($1) ON CONFLICT DO NOTHING',
         [rows[0].id]
       );
     }
+    await client.query(
+      'INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, $3)',
+      [req.user.org_id, rows[0].id, role]
+    );
+    await client.query('COMMIT');
     res.status(201).json(rows[0]);
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     if (err.code === '23505') return res.status(409).json({ error: 'Email already in use' });
     console.error(err);
     res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
   }
 });
 

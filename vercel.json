@@ -1,0 +1,12 @@
+{
+  "framework": null,
+  "buildCommand": "npm run vercel-build",
+  "outputDirectory": "client/dist",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index.js" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ],
+  "crons": [
+    { "path": "/api/notifications/cron", "schedule": "30 2 * * 1-5" }
+  ]
+}

@@ -32,22 +32,7 @@ No linter is configured. Tests are Playwright E2E only (`tests/`); no unit tests
 - A test admin user must exist: `test.admin@relay-crm.test` / `TestPass123!`
 - Tests share the live DB and run `workers: 1` (serial) — test data created in one test is used by later tests in the same file
 
-To create the first admin user:
-```bash
-node -e "
-const bcrypt = require('bcryptjs');
-const { Pool } = require('pg');
-require('dotenv').config();
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-bcrypt.hash('changeme123', 10).then(hash =>
-  pool.query(
-    \`INSERT INTO users (name, email, password_hash, role, color)
-     VALUES ('Admin User', 'admin@yourcompany.com', \$1, 'admin', '#5B5BD6')\`,
-    [hash]
-  ).then(() => { console.log('Admin created'); pool.end(); })
-);
-"
-```
+To create the first admin user, use the app itself — "Create an organization" on the login screen (`POST /api/auth/signup`) creates an `organizations` row and its first `users` row (`role='admin'`) together. There's no seed script anymore; every org is created this way, including in tests.
 
 ## Architecture
 
@@ -56,11 +41,14 @@ bcrypt.hash('changeme123', 10).then(hash =>
 - **Client** (`client/`) — React 18 + Vite on port 5173; Vite proxies `/api/*` → `:3002`, so all API calls use relative `/api` paths
 
 ### Server structure
-- `server/index.js` — entry point: runs migrations, starts scheduler, mounts all routes
+- `server/app.js` — the actual Express app (middleware + all route mounts), exported with no `listen()`/scheduler/migration call so it can be reused by either entry point below
+- `server/index.js` — traditional entry point (local dev, Render, any long-running host): runs migrations, starts the `node-cron` scheduler, calls `app.listen()`
+- `api/index.js` + `vercel.json` — Vercel serverless entry point: exports `server/app.js` directly; no scheduler (Vercel Cron hits `GET /api/notifications/cron` instead) and no migrate-on-boot (that runs once at build time via the `vercel-build` npm script instead — see `server/db/migrate.js`'s `require.main === module` branch)
 - `server/config.js` — single source of truth for env vars; import from here, not `process.env` directly
-- `server/db/migrate.js` — runs all `.sql` files in `server/migrations/` in filename order on every startup (idempotent: `IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`)
-- `server/middleware/auth.js` — JWT verification; attaches `req.user` (`{ id, role, name, … }`)
+- `server/db/migrate.js` — runs all `.sql` files in `server/migrations/` in filename order (idempotent: `IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`); also runnable standalone as `node server/db/migrate.js`
+- `server/middleware/auth.js` — JWT verification; attaches `req.user` (`{ id, role, name, org_id, … }` — `org_id` is embedded in the JWT at login, not looked up per request)
 - `server/middleware/requireAdmin.js` — role gate, used after `verifyJWT`
+- `server/utils/uploadDir.js` — resolves the multer destination directory for avatar/HR-doc/payroll uploads; picks `server/uploads/*` normally, or a `/tmp` fallback on Vercel (where the filesystem is read-only outside `/tmp`) purely to stop the app crashing at startup — uploads still don't durably persist on Vercel without adding your own object storage
 
 ### Client structure
 `client/src/pages/CRM.jsx` is one large file (~4300 lines) containing the entire authenticated app. All views, sub-components, and helpers live here. Navigation is `useState`-driven (`view` state), not React Router routes.
@@ -80,8 +68,11 @@ bcrypt.hash('changeme123', 10).then(hash =>
 
 **Other client files:**
 - `client/src/pages/Login.jsx` — standalone login page
-- `client/src/context/AuthContext.jsx` — `{ user, login, logout, refreshUser, isAdmin, loading }` via `useAuth()`; JWT in `localStorage` under `crm_token`
+- `client/src/context/AuthContext.jsx` — `{ user, login, logout, refreshUser, isAdmin, loading }` via `useAuth()`; JWT in `localStorage` under `crm_token`. Signup/forgot/reset-password don't go through this context — `Login.jsx` calls the `/api/auth/*` endpoints directly and only calls `login()` once there's a real session to establish
 - `client/src/api/index.js` — axios instance; auto-attaches Bearer token; redirects to `/login` on 401 **except** for the `/auth/login` endpoint itself (to allow displaying auth errors)
+
+### Multi-tenancy
+Every signup (`POST /api/auth/signup`) creates its own `organizations` row — this is a multi-tenant app, not a single-install-per-company one. `memberships` links `users` to `organizations` (one org per user today; modeled as a join table, not a `users.org_id` column, so that's not a hard constraint). Invited users (`POST /api/users`) always land in the inviter's own org (`req.user.org_id`, embedded in their JWT), never an arbitrary one. **Note:** `org_id` exists on every tenant-scoped table (added for future data isolation) but nothing currently filters queries by it — enforcing that is unfinished work, not a bug; today's isolation is really "which org a user's JWT says they belong to," checked nowhere except at invite time.
 
 ### Access control
 - **Admin**: all contacts + unmasked deal values + Team view + user management
@@ -94,7 +85,10 @@ All monetary values stored as **INR integers**. Currency display conversion is c
 **Critical type gotcha:** `SUM()` of an `INTEGER` column returns `BIGINT` in PostgreSQL, which the `pg` driver returns as a JavaScript **string**. This causes string concatenation instead of arithmetic if not cast. The `effective_value` field in `contactSelect()` casts with `::float8` to prevent this. Apply the same pattern any time you aggregate numeric columns.
 
 **Tables:**
-- `users` — `role` is `'admin'` or `'rep'`; `teams_webhook_url` for MS Teams notifications
+- `organizations` — one row per signup; just `id`/`name`
+- `memberships` — join table linking `users` to `organizations`, with a per-org `role` (currently unused/vestigial — `users.role` below is what every route actually checks; see Multi-tenancy above)
+- `auth_tokens` — one-shot tokens for email verification and password reset, `type` in `('verify_email','reset_password')`, `used_at`/`expires_at` enforced by the routes in `server/routes/auth.js`
+- `users` — `role` is `'admin'` or `'rep'`; `email_verified` gates login when `SMTP_*` is configured (auto-`TRUE` otherwise, and for anyone invited by an admin); `teams_webhook_url` for MS Teams notifications
 - `contacts` — `value` (INTEGER, manual deal value); `custom_fields` (JSONB); `stage` from `STAGES` constant; `next_followup` (DATE); `recurrence`
 - `activity` — append-only log per contact; `type` in `('note','call','email','check','bell')`
 - `deals` — linked to contacts; `stage` from `DEAL_STAGES` constant; `value` (INTEGER)

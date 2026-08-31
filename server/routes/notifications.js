@@ -39,4 +39,17 @@ router.post('/trigger', verifyJWT, async (req, res) => {
   res.json({ ok: true, message: 'Digest triggered — check server logs' });
 });
 
+// GET /api/notifications/cron — invoked by a Vercel Cron Job (see vercel.json), which only
+// issues GET requests carrying no user identity. Vercel automatically attaches
+// `Authorization: Bearer $CRON_SECRET` to its own cron requests when that env var is set;
+// verifying it here is what stops anyone else from hitting this otherwise-public path.
+// Not used on a traditional host (Render, a VPS) — those keep the node-cron scheduler.
+router.get('/cron', async (req, res) => {
+  if (!process.env.CRON_SECRET || req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  runDailyNotifications().catch(console.error);
+  res.json({ ok: true, message: 'Digest triggered via cron' });
+});
+
 module.exports = router;

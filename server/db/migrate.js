@@ -13,3 +13,11 @@ async function migrate() {
 }
 
 module.exports = migrate;
+
+// Allows `node server/db/migrate.js` as a standalone step (used as part of the Vercel
+// build command, since serverless functions must not run migrations on every cold start).
+if (require.main === module) {
+  migrate()
+    .then(() => process.exit(0))
+    .catch(err => { console.error('Migration failed:', err); process.exit(1); });
+}

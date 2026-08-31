@@ -6,8 +6,10 @@ const pool    = require('../db/pool');
 const verify  = require('../middleware/auth');
 const { isHRAdmin } = require('../utils/hrHelpers');
 
+const { resolveUploadDir } = require('../utils/uploadDir');
+const PAYROLL_DIR = resolveUploadDir('payroll');
 const storage = multer.diskStorage({
-  destination: path.join(__dirname, '../uploads/payroll'),
+  destination: PAYROLL_DIR,
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname);
     cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
@@ -57,7 +59,7 @@ router.get('/slips/all', verify, async (req, res) => {
 
 // GET /api/hr/payroll/file/:filename — authenticated salary slip download
 router.get('/file/:filename', verify, (req, res) => {
-  const fp = path.join(__dirname, '../uploads/payroll', path.basename(req.params.filename));
+  const fp = path.join(PAYROLL_DIR, path.basename(req.params.filename));
   if (!fs.existsSync(fp)) return res.status(404).json({ error: 'File not found' });
   res.download(fp);
 });
@@ -72,7 +74,7 @@ router.post('/slips', verify, upload.single('file'), async (req, res) => {
     // Delete old file if replacing
     const old = await pool.query('SELECT file_path FROM salary_slips WHERE user_id=$1 AND month=$2', [user_id, month]);
     if (old.rows[0]?.file_path) {
-      fs.unlink(path.join(__dirname, '../uploads/payroll', old.rows[0].file_path), () => {});
+      fs.unlink(path.join(PAYROLL_DIR, old.rows[0].file_path), () => {});
     }
     const r = await pool.query(`
       INSERT INTO salary_slips (user_id, month, gross, deductions, net, components, file_path, file_name, generated_by)
@@ -91,7 +93,7 @@ router.delete('/slips/:id', verify, async (req, res) => {
   try {
     const r = await pool.query('DELETE FROM salary_slips WHERE id=$1 RETURNING file_path', [req.params.id]);
     if (r.rows[0]?.file_path) {
-      fs.unlink(path.join(__dirname, '../uploads/payroll', r.rows[0].file_path), () => {});
+      fs.unlink(path.join(PAYROLL_DIR, r.rows[0].file_path), () => {});
     }
     res.json({ ok: true });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Server error' }); }

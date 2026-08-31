@@ -6,8 +6,12 @@
     "server": "node server/index.js",
     "client": "npm --prefix client run dev",
     "build": "npm --prefix client run build",
+    "vercel-build": "npm --prefix client install --include=dev && npm --prefix client run build && node server/db/migrate.js",
     "test": "playwright test",
     "test:ui": "playwright test --reporter=list"
+  },
+  "engines": {
+    "node": "18.x"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

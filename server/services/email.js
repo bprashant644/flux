@@ -117,7 +117,7 @@ function buildTaskAssignedHtml(user, task, assignedByName) {
   <div style="padding:0 26px 22px">
     <a href="${process.env.APP_URL || 'http://localhost:5173'}/my-tasks" style="background:#5b5bd6;color:#fff;padding:10px 22px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">Open My Tasks</a>
   </div>
-  <div style="padding:0 26px 20px;color:#aaa;font-size:12px">SCC Flux · Turn off task-assignment emails in Settings</div>
+  <div style="padding:0 26px 20px;color:#aaa;font-size:12px">Flux · Turn off task-assignment emails in Settings</div>
 </div>
 </body></html>`;
 }
@@ -129,7 +129,7 @@ async function sendTaskAssignedEmail(user, task, assignedByName) {
     return;
   }
   await transport.sendMail({
-    from: `"SCC Flux" <${smtp.from}>`,
+    from: `"Flux" <${smtp.from}>`,
     to: user.email,
     subject: `New task assigned: ${task.title}`,
     html: buildTaskAssignedHtml(user, task, assignedByName),
@@ -137,4 +137,57 @@ async function sendTaskAssignedEmail(user, task, assignedByName) {
   console.log(`[email] Task-assigned email sent to ${user.email}`);
 }
 
-module.exports = { sendDigest, sendTaskAssignedEmail };
+function buildAuthLinkHtml(heading, bodyText, linkUrl, linkLabel) {
+  return `
+<!DOCTYPE html><html><body style="font-family:sans-serif;color:#19191f;background:#f4f4f6;margin:0;padding:24px">
+<div style="max-width:480px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
+  <div style="background:#5b5bd6;padding:22px 26px">
+    <div style="color:#fff;font-size:18px;font-weight:800">${heading}</div>
+  </div>
+  <div style="padding:22px 26px">
+    <div style="font-size:13.5px;color:#444;line-height:1.5;margin-bottom:18px">${bodyText}</div>
+    <a href="${linkUrl}" style="background:#5b5bd6;color:#fff;padding:10px 22px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">${linkLabel}</a>
+  </div>
+</div>
+</body></html>`;
+}
+
+// Returns true if it actually sent (caller uses this to decide whether a signup can be
+// auto-verified instead — see server/routes/auth.js).
+async function sendVerificationEmail(user, token) {
+  const transport = createTransport();
+  if (!transport) return false;
+  const link = `${process.env.APP_URL || 'http://localhost:5173'}/login?mode=verify&token=${token}`;
+  await transport.sendMail({
+    from: `"Flux" <${smtp.from}>`,
+    to: user.email,
+    subject: 'Confirm your Flux account',
+    html: buildAuthLinkHtml(
+      'Confirm your email',
+      `Hi ${user.name}, click below to confirm your email and finish creating your organization. This link expires in 24 hours.`,
+      link, 'Confirm email'
+    ),
+  });
+  console.log(`[email] Verification email sent to ${user.email}`);
+  return true;
+}
+
+async function sendPasswordResetEmail(user, token) {
+  const transport = createTransport();
+  if (!transport) return false;
+  const link = `${process.env.APP_URL || 'http://localhost:5173'}/login?mode=reset&token=${token}`;
+  await transport.sendMail({
+    from: `"Flux" <${smtp.from}>`,
+    to: user.email,
+    subject: 'Reset your Flux password',
+    html: buildAuthLinkHtml(
+      'Reset your password',
+      `Hi ${user.name}, click below to set a new password. This link expires in 1 hour. If you didn't request this, you can ignore this email.`,
+      link, 'Set new password'
+    ),
+  });
+  console.log(`[email] Password reset email sent to ${user.email}`);
+  return true;
+}
+
+module.exports = { sendDigest, sendTaskAssignedEmail, sendVerificationEmail, sendPasswordResetEmail };

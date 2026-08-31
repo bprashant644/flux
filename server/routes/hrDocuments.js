@@ -6,8 +6,10 @@ const pool    = require('../db/pool');
 const verify  = require('../middleware/auth');
 const { isHRAdmin } = require('../utils/hrHelpers');
 
+const { resolveUploadDir } = require('../utils/uploadDir');
+const HR_DOCS_DIR = resolveUploadDir('hr-docs');
 const storage = multer.diskStorage({
-  destination: path.join(__dirname, '../uploads/hr-docs'),
+  destination: HR_DOCS_DIR,
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname);
     cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
@@ -50,7 +52,7 @@ router.get('/', verify, async (req, res) => {
 
 // GET /api/hr/documents/file/:filename — authenticated file download (must be before /:id)
 router.get('/file/:filename', verify, (req, res) => {
-  const fp = path.join(__dirname, '../uploads/hr-docs', path.basename(req.params.filename));
+  const fp = path.join(HR_DOCS_DIR, path.basename(req.params.filename));
   if (!fs.existsSync(fp)) return res.status(404).json({ error: 'File not found' });
   res.download(fp);
 });
@@ -106,7 +108,7 @@ router.delete('/:id', verify, async (req, res) => {
   try {
     const r = await pool.query('DELETE FROM hr_documents WHERE id=$1 RETURNING file_path', [req.params.id]);
     if (r.rows[0]?.file_path) {
-      fs.unlink(path.join(__dirname, '../uploads/hr-docs', r.rows[0].file_path), () => {});
+      fs.unlink(path.join(HR_DOCS_DIR, r.rows[0].file_path), () => {});
     }
     res.json({ ok: true });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Server error' }); }

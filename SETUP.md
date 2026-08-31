@@ -22,22 +22,8 @@ createdb flux_crm
 # The app auto-runs migrations on startup — no manual SQL needed
 ```
 
-## 4. Create the first admin user
-```bash
-node -e "
-const bcrypt = require('bcryptjs');
-const { Pool } = require('pg');
-require('dotenv').config();
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-bcrypt.hash('changeme123', 10).then(hash =>
-  pool.query(
-    \`INSERT INTO users (name, email, password_hash, role, color)
-     VALUES ('Admin User', 'admin@yourcompany.com', \$1, 'admin', '#5B5BD6')\`,
-    [hash]
-  ).then(() => { console.log('Admin created'); pool.end(); })
-);
-"
-```
+## 4. Create your organization
+No seed script — start the app (next step), open it, and use "Create an organization" on the login screen. That first signup becomes the admin of a new organization, stored as its own row (`organizations`/`memberships`) — later signups create *separate* organizations, so this is safe for a shared/public deployment too, not just a single-team install. Without `SMTP_*` configured, the new account is verified automatically rather than left waiting on an email that can't be sent.
 
 ## 5. Start in development
 ```bash
@@ -74,4 +60,4 @@ Each user sets their own Incoming Webhook URL in **Settings** inside the app:
 | **Admin** | See all contacts + all pipeline + deal values + Team view + user management |
 | **Rep** | See all contacts (no others' deal values) · own pipeline only · no Team view |
 
-Create rep accounts via Admin → (user management API or DB insert).
+Invite teammates from the Users page — they always land in your organization, never a separate one (only the initial "Create an organization" signup creates a new org).

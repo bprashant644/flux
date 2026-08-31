@@ -3,6 +3,7 @@
 A self-hosted CRM, project management, and HR tool for small to medium teams.
 
 **Features**
+- Multi-tenant: anyone can sign up and create their own organization, then invite teammates into it — no shared install between separate teams
 - Contact pipeline with stages, follow-up scheduling, and activity log
 - Deal tracking with multi-currency support (stored as INR, displayed in any currency)
 - Project management with milestones, deliverables, quadrant prioritisation, and PPC tracking
@@ -15,8 +16,10 @@ A self-hosted CRM, project management, and HR tool for small to medium teams.
 
 - **Server** — Node.js + Express + PostgreSQL
 - **Client** — React 18 + Vite
-- **Auth** — JWT (stored in localStorage)
+- **Auth** — JWT (stored in localStorage) + bcrypt; self-service signup with email verification when SMTP is configured (auto-verified otherwise, so a fresh install isn't stuck with no way to confirm an account)
 - **Tests** — Playwright E2E
+
+No external SaaS dependency for auth or storage — this runs entirely on Node + PostgreSQL, on infrastructure you control.
 
 ## Quick start
 
@@ -42,22 +45,8 @@ createdb flux_crm
 ```
 Migrations run automatically on first startup — no manual SQL needed.
 
-### 4. Create the first admin user
-```bash
-node -e "
-const bcrypt = require('bcryptjs');
-const { Pool } = require('pg');
-require('dotenv').config();
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-bcrypt.hash('changeme123', 10).then(hash =>
-  pool.query(
-    \`INSERT INTO users (name, email, password_hash, role, color)
-     VALUES ('Admin User', 'admin@yourcompany.com', \$1, 'admin', '#5B5BD6')\`,
-    [hash]
-  ).then(() => { console.log('Admin created'); pool.end(); })
-);
-"
-```
+### 4. Create your organization
+No seed script needed — start the app (next step), open it, and use **"Create an organization"** on the login screen. That first signup becomes your organization's admin. If `SMTP_*` isn't configured in `.env`, the account is verified automatically so you're not stuck waiting on an email that was never sent; configure SMTP first if you want real email verification, and again later for teammates you invite from the Users page.
 
 ### 5. Start development servers
 ```bash
@@ -72,6 +61,10 @@ npm run build
 NODE_ENV=production node server/index.js
 # Serves the built client + API on port 3001
 ```
+
+## Deployment
+
+See [DEPLOY.md](DEPLOY.md) for two options: a traditional Node host (Render, a VPS, etc. — persistent disk, so HR document/payroll/avatar uploads work normally) or a Vercel-compatible serverless setup (uploads won't persist there without adding your own object storage — everything else works).
 
 ## Notification setup
 

@@ -1,48 +1,12 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const path = require('path');
+const app = require('./app');
 const { port } = require('./config');
 const migrate = require('./db/migrate');
 const { startScheduler } = require('./services/scheduler');
 
-const app = express();
-
-app.use(cors({ origin: true, credentials: true }));
-app.use(express.json());
-
-// Publicly served avatar photos (low-sensitivity images, unlike gated HR document downloads).
-// Mounted under /api so the Vite dev-server proxy (which only forwards /api/*) reaches it too.
-app.use('/api/uploads/avatars', express.static(path.join(__dirname, 'uploads/avatars')));
-
-// API routes
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/users', require('./routes/users'));
-app.use('/api/contacts', require('./routes/contacts'));
-app.use('/api/contacts/:id/activity', require('./routes/activity'));
-app.use('/api/deals', require('./routes/deals'));
-app.use('/api/tasks', require('./routes/tasks'));
-app.use('/api/custom-fields', require('./routes/customFields'));
-app.use('/api/calendar', require('./routes/calendar'));
-app.use('/api/notifications', require('./routes/notifications'));
-app.use('/api/projects', require('./routes/projects'));
-app.use('/api/daily-focus', require('./routes/dailyFocus'));
-app.use('/api/projects/:projectId/milestones', require('./routes/projectMilestones'));
-app.use('/api/projects/:projectId/items',      require('./routes/projectItems'));
-app.use('/api/hr/employees',  require('./routes/hrEmployees'));
-app.use('/api/hr/leaves',     require('./routes/hrLeaves'));
-app.use('/api/hr/holidays',   require('./routes/hrHolidays'));
-app.use('/api/hr/attendance', require('./routes/hrAttendance'));
-app.use('/api/hr/documents',  require('./routes/hrDocuments'));
-app.use('/api/hr/payroll',    require('./routes/hrPayroll'));
-
-// Serve built React app in production
-if (process.env.NODE_ENV === 'production') {
-  const clientDist = path.join(__dirname, '../client/dist');
-  app.use(express.static(clientDist));
-  app.get('*', (req, res) => res.sendFile(path.join(clientDist, 'index.html')));
-}
-
+// Traditional single-process entry point — used by local dev (`npm run dev`/`npm run server`)
+// and any non-serverless host (Render, a VPS, etc.). On Vercel, api/index.js exports
+// server/app.js directly instead: migrations run at build time and the cron replaces
+// startScheduler() there.
 async function start() {
   try {
     await migrate();

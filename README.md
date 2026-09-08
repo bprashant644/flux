@@ -6,8 +6,9 @@ A self-hosted CRM, project management, and HR tool for small to medium teams.
 - Multi-tenant: anyone can sign up and create their own organization, then invite teammates into it — no shared install between separate teams
 - Contact pipeline with stages, follow-up scheduling, and activity log
 - Deal tracking with multi-currency support (stored as INR, displayed in any currency)
-- Project management with milestones, deliverables, quadrant prioritisation, and PPC tracking
-- HR module — employees, attendance, leaves, payroll, documents
+- Project management with milestones, deliverables, tags, quadrant prioritisation, and PPC tracking
+- Daily focus queue — pin due items to a "Today" plan, pull in overdue work, carry over what didn't get done
+- HR module — employees, attendance, leaves (with a leave calendar), holidays, payroll, documents
 - Microsoft Teams and email digest notifications
 - Role-based access: Admin and Rep roles
 - Per-user module access control

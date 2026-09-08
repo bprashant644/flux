@@ -27,7 +27,7 @@ Nothing else — the app creates and migrates its own schema on every boot (`ser
 |---|---|
 | `APP_URL` | Used in email links; defaults to `RENDER_EXTERNAL_URL` on Render |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` | Email digest, and real email verification/password-reset links — without these, signups auto-verify and forgot-password returns a clear "ask your admin" error instead of silently failing |
-| `GRAPH_CLIENT_ID` / `GRAPH_CLIENT_SECRET` / `GRAPH_TENANT_ID` / `GRAPH_REDIRECT_URI` | Outlook calendar sync |
+| `GRAPH_CLIENT_ID` / `GRAPH_CLIENT_SECRET` / `GRAPH_TENANT_ID` / `GRAPH_REDIRECT_URI` | Outlook calendar sync — the OAuth flow and token storage (`server/routes/calendar.js`) work end-to-end, but nothing in the client links to `/api/calendar/connect` yet, so there's no in-app button; skip these unless you're wiring that up yourself |
 
 ### Migrate existing data (skip for a fresh install)
 ```bash
